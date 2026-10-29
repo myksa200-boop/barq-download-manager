@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head><meta charset="UTF-8"><link rel="stylesheet" href="popup.css"></head>
+<body>
+  <header><img src="icons/32.png" alt=""><b>Barq</b><small id="ver" class="ver"></small><span id="st" class="st">…</span></header>
+  <div id="warn" class="warn hidden"></div>
+  <label class="row"><input type="checkbox" id="intercept"> اعتراض تنزيلات المتصفح</label>
+  <label class="row"><input type="checkbox" id="panel"> إظهار زر «تنزيل هذا الفيديو»</label>
+  <label class="row">المنفذ <input type="text" inputmode="numeric" dir="ltr" id="port"> <small id="auto" class="hint"></small></label>
+  <button id="page">تنزيل فيديو هذه الصفحة (YouTube وغيره)</button>
+  <button id="all">تنزيل كل روابط هذه الصفحة</button>
+  <div id="media"></div>
+  <p class="hint" id="hint"></p>
+  <script src="popup.js"></script>
+</body>
+</html>

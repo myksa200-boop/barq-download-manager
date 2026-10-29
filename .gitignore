@@ -1,0 +1,6 @@
+node_modules/
+release/
+*.realm
+*.realm.lock
+*.realm.management/
+dist-ext/
