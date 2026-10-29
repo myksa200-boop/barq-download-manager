@@ -143,7 +143,7 @@
             const ext = qualSel.value === 'a:mp3' ? '.mp3' : qualSel.value === 'a:m4a' ? '.m4a' : '.mp4';
             nameIn.value = nameIn.value.replace(/\.(mp4|m4a|mp3)$/i, '') + ext;
           }
-          const size = v && v.size ? v.size : meta.size;
+          const size = v ? (v.size || -1) : meta.size;   // لكل جودة حجمها؛ لا نعرض حجم أعلى جودة عند اختيار جودة أقل
           info.innerHTML = (meta.playlist ? '' : `<span>${esc(t('size'))}: <b>${size > 0 ? ltr((meta.kind === 'ytdlp' ? '≈ ' : '') + fmtSize(size)) : esc(t('unknown'))}</b></span>`) +
             `<span>${esc(t('resumeSupport'))}: <b style="color:${meta.resumable ? 'var(--ok)' : 'var(--warn)'}">${esc(t(meta.resumable ? 'yes' : 'no'))}</b></span>` +
             (['hls', 'dash'].includes(meta.kind) ? `<span class="badge">${meta.kind.toUpperCase()}</span>` : meta.kind === 'ytdlp' ? '<span class="badge">yt-dlp</span>' : '');

@@ -195,11 +195,14 @@ async function ytdlpInfo(components, rec, { timeout = 120000 } = {}) {
   }
   const formats = j.formats || [];
   const audio = formats.filter(f => f.vcodec === 'none' && f.acodec && f.acodec !== 'none').sort((a, b) => (b.tbr || 0) - (a.tbr || 0))[0];
-  const asz = audio ? (audio.filesize || audio.filesize_approx || 0) : 0;
+  // الحجم: من yt-dlp إن وُجد، وإلا تقدير من معدل البت × المدة (كثير من صيغ YouTube بلا حجم)
+  const dur = j.duration || 0;
+  const fsize = (f) => f.filesize || f.filesize_approx || (f.tbr && dur ? Math.round(f.tbr * 1000 / 8 * dur) : 0);
+  const asz = audio ? fsize(audio) : 0;
   const byH = new Map();
   for (const f of formats) {
     if (!f.height || !f.vcodec || f.vcodec === 'none') continue;
-    const sz = (f.filesize || f.filesize_approx || 0) + (f.acodec && f.acodec !== 'none' ? 0 : asz);
+    const sz = fsize(f) + (f.acodec && f.acodec !== 'none' ? 0 : asz);
     const cur = byH.get(f.height);
     if (!cur || (f.tbr || 0) > cur.tbr) byH.set(f.height, { tbr: f.tbr || 0, size: sz, fps: f.fps || 0 });
   }
