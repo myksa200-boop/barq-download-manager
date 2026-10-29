@@ -71,6 +71,31 @@ function openProgress(id, opts = {}) {
 function send(ch, ...args) {
   if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send(ch, ...args);
 }
+// نافذة "معلومات التنزيل" المستقلة (مثل IDM): تظهر وحدها دون النافذة الرئيسية
+const addWins = new Set();
+const addPending = new Map();
+let addSeq = 0;
+function openAddWindow(data) {
+  const k = String(++addSeq);
+  addPending.set(k, data);
+  const w = new BrowserWindow({
+    width: 640, height: 430, useContentSize: true, resizable: false, minimizable: true, maximizable: false, show: false,
+    icon: ICON, backgroundColor: manager.settings.theme === 'dark' ? '#111827' : '#ffffff', title: 'Barq',
+    webPreferences: { preload: path.join(__dirname, '..', 'preload', 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: false },
+  });
+  w.removeMenu();
+  w.loadFile(path.join(RENDERER, 'add.html'), { query: { k } });
+  w.once('ready-to-show', () => {
+    w.show();
+    // فوق المتصفح لحظة الظهور ثم تعود نافذة عادية
+    w.setAlwaysOnTop(true); w.focus(); app.focus?.({ steal: true });
+    setTimeout(() => { if (!w.isDestroyed()) w.setAlwaysOnTop(false); }, 600);
+  });
+  w.on('closed', () => { addWins.delete(w); addPending.delete(k); });
+  addWins.add(w);
+  return w;
+}
+function sendAddWins(ch, ...args) { for (const w of addWins) if (!w.isDestroyed()) w.webContents.send(ch, ...args); }
 function sendProgressWin(id, ch, ...args) {
   const w = progressWins.get(id);
   if (w && !w.isDestroyed()) w.webContents.send(ch, ...args);
@@ -81,9 +106,9 @@ function wireManager() {
   manager.on('update', (rec) => { send('evt:update', rec); sendProgressWin(rec._id, 'evt:update', rec); updateTray(); });
   manager.on('progress', (id, snap) => { pendingProgress[id] = snap; });
   manager.on('removed', (ids) => { send('evt:removed', ids); for (const id of ids) progressWins.get(id)?.close(); });
-  manager.on('reload', () => send('evt:reload', manager.state()));
-  manager.on('settings', (s) => { send('evt:settings', s); for (const w of progressWins.values()) w.webContents.send('evt:settings', s); });
-  manager.on('queues', (q) => send('evt:queues', q));
+  manager.on('reload', () => { const st = manager.state(); send('evt:reload', st); sendAddWins('evt:reload', st); });
+  manager.on('settings', (s) => { send('evt:settings', s); sendAddWins('evt:settings', s); for (const w of progressWins.values()) w.webContents.send('evt:settings', s); });
+  manager.on('queues', (q) => { send('evt:queues', q); sendAddWins('evt:queues', q); });
   manager.on('started', (id) => {
     const r = manager.db.downloads.get(id);
     if (manager.settings.showProgressOnStart && r && !r.queueId && !silentIds.has(id)) openProgress(id);
@@ -186,7 +211,7 @@ function clipboardMonitor() {
       const exts = String(manager.settings.captureExts).toLowerCase().split(/\s+/);
       let ext = '';
       try { ext = U.extOf(new URL(t).pathname); } catch { return; }
-      if (ext && exts.includes(ext)) { showMain(); send('evt:external', { url: t, source: 'clipboard' }); }
+      if (ext && exts.includes(ext)) openAddWindow({ url: t, source: 'clipboard' });
     } finally { busy = false; }
   }, 1200);
 }
@@ -223,8 +248,7 @@ function handleExternal(items, isBatch) {
     }
     return manager.add({ ...data, start: 'now' });
   }
-  showMain();
-  send('evt:external', data);
+  openAddWindow(data);
 }
 
 function handleCli(argv) {
@@ -236,9 +260,7 @@ function handleCli(argv) {
       if (c.silent) silentIds.add(rec._id);
       if (c.quit && !c.add) quitAfter.add(rec._id);
     } else {
-      showMain();
-      const go = () => send('evt:external', { ...opts, source: 'cli' });
-      if (mainWin.webContents.isLoading()) mainWin.webContents.once('did-finish-load', go); else go();
+      openAddWindow({ ...opts, source: 'cli' });
     }
   }
   if (c.startQueue) manager.startQueue('main');
@@ -260,6 +282,7 @@ function registerIpc() {
     try { return { ok: true, data: await fn(...a) }; } catch (e) { return { ok: false, error: e.message || String(e) }; }
   });
   h('state', () => manager.state());
+  h('addData', (k) => { const d = addPending.get(String(k)); addPending.delete(String(k)); return d || null; });
   h('get', (id) => ({ rec: manager.db.downloads.get(id), progress: manager.progress.get(id) || null, settings: manager.settings }));
   h('inspect', (o) => manager.inspect(o));
   h('add', (o) => manager.add(o));

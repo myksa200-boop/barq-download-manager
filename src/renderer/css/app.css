@@ -183,3 +183,9 @@ body.pw { overflow: hidden; height: auto; }
 .media-card .mc-body { min-width: 0; flex: 1; }
 .media-card .mc-title { font-weight: 700; font-size: 13.5px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .media-card .mc-list { margin-top: 4px; font-size: 12px; max-height: 92px; overflow: auto; }
+
+/* نافذة معلومات التنزيل المستقلة: الحوار يملأ النافذة بلا خلفية ولا فراغ */
+body.aw { background: var(--bg); overflow: hidden; height: auto; }
+body.aw > .overlay.root { position: static; background: none; display: block; animation: none; }
+body.aw > .overlay.root > .modal { width: 100% !important; max-width: none; max-height: none; border: 0; border-radius: 0; box-shadow: none; animation: none; }
+body.aw > .overlay.root > .modal > .modal-h { display: none; }
