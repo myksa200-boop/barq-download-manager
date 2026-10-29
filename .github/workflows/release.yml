@@ -1,6 +1,8 @@
 name: Release
 on:
   push:
+    branches: [main]
+    paths: ['package.json', '.github/release-notes.md', '.github/workflows/release.yml']
     tags: ['v*']
   workflow_dispatch:
 permissions:
@@ -14,16 +16,23 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Read version
+        id: ver
+        shell: bash
+        run: echo "v=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
       - run: npm ci
       - name: Realm native module (Windows)
         run: node -e "require('realm'); console.log('Realm', require('realm/package.json').version)"
       - run: npm run dist:win
       - uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
         with:
+          tag_name: v${{ steps.ver.outputs.v }}
+          target_commitish: ${{ github.sha }}
+          name: Barq ${{ steps.ver.outputs.v }}
+          body_path: .github/release-notes.md
+          make_latest: true
           files: |
             release/Barq-Setup-*.exe
             release/Barq-Portable-*.exe
             dist-ext/barq-chromium.zip
             dist-ext/barq-firefox.zip
-          generate_release_notes: true
