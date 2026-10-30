@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="../../releases/latest"><img alt="Download" src="https://img.shields.io/badge/%D8%AA%D9%86%D8%B2%D9%8A%D9%84-Windows-2563eb?style=for-the-badge&logo=windows&logoColor=white"></a>
-  <img alt="Version" src="https://img.shields.io/badge/version-1.3.1-1e40af?style=for-the-badge">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.3.6-1e40af?style=for-the-badge">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-16a34a?style=for-the-badge">
   <img alt="Electron" src="https://img.shields.io/badge/Electron-45-47848f?style=for-the-badge&logo=electron&logoColor=white">
 </p>
@@ -46,7 +46,7 @@
 
 ### 📥 التثبيت
 
-1. حمّل **`Barq-Setup.exe`** من صفحة **[الإصدارات](../../releases/latest)**، أو النسخة المحمولة **`Barq-Portable.exe`** التي تعمل بلا تثبيت.
+1. حمّل [Barq-Setup-1.3.6.exe](../../releases/latest/download/Barq-Setup-1.3.6.exe) من صفحة الإصدارات.
 2. شغّل البرنامج. تظهر نافذة **«ربط المتصفح بالبرنامج»**: اضغط «ربط الآن» بجانب متصفحك، ثم اتبع الخطوات الثلاث.
 3. عند أول تنزيل من YouTube، ينزّل البرنامج مكوّنَي yt-dlp وFFmpeg تلقائياً.
 
@@ -99,7 +99,7 @@
 
 ### Install
 
-Download **`Barq-Setup.exe`** (or the portable build) from **[Releases](../../releases/latest)**, run it, and follow the *Connect your browser* wizard.
+Download [Barq-Setup-1.3.6.exe](../../releases/latest/download/Barq-Setup-1.3.6.exe) from [Releases](../../releases/latest), run it, and follow the *Connect your browser* wizard.
 
 ### Build from source
 
@@ -111,7 +111,7 @@ npm run bench        # speed benchmark
 npm run dist:win     # Windows installer + portable exe → release/
 ```
 
-Pushing a tag such as `v1.3.1` builds the Windows installer on GitHub Actions and attaches it to a Release automatically. See `.github/workflows/release.yml`.
+Pushing a tag such as `v1.3.6` builds the Windows installer on GitHub Actions and attaches it to a Release automatically. See `.github/workflows/release.yml`.
 
 ### Architecture
 
