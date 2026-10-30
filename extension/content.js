@@ -34,6 +34,21 @@
   $('lbl').textContent = ar ? 'تنزيل هذا الفيديو' : 'Download this video';
   document.documentElement.appendChild(host);
 
+  /* بعض المواقع (ريديت مثلاً) تضع المشغّل داخل Shadow DOM: نبحث داخل الجذور المفتوحة أيضاً */
+  let deepCache = null, deepTime = 0;
+  function allVideos() {
+    const now = Date.now();
+    if (deepCache && now - deepTime < 800) return deepCache;
+    const out = [...document.querySelectorAll('video')];
+    const walk = (root, depth) => {
+      if (depth > 6) return;
+      for (const el of root.querySelectorAll('*')) if (el.shadowRoot) { out.push(...el.shadowRoot.querySelectorAll('video')); walk(el.shadowRoot, depth + 1); }
+    };
+    if (document.querySelector('shreddit-player, shreddit-player-2, [data-shadow-player]') || !out.length) walk(document, 0);
+    deepCache = out; deepTime = now; return out;
+  }
+  const up = (el) => el.parentElement || (el.getRootNode && el.getRootNode().host) || null;
+  const countVideos = (el) => el.querySelectorAll('video').length + [...el.querySelectorAll('shreddit-player, shreddit-player-2')].length;
   const fmt = (b) => { if (!(b > 0)) return ''; const u = ['KB', 'MB', 'GB']; let i = -1; do { b /= 1024; i++; } while (b >= 1024 && i < 2); return b.toFixed(1) + ' ' + u[i]; };
   const title = () => (document.title || 'video').replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 120);
 
@@ -67,10 +82,10 @@
   }
   /* مواقع التواصل: الصفحة (مثل x.com/home) تحوي عشرات المنشورات، فنأخذ رابط المنشور الذي يحتوي الفيديو نفسه */
   const SOCIAL = [
-    { re: /(^|\.)(x\.com|twitter\.com)$/i, name: 'X', self: /^\/[\w]+\/status\/\d+/, link: /^\/[\w]+\/status\/\d+\/?$/ },
-    { re: /(^|\.)instagram\.com$/i, name: 'Instagram', self: /^\/(p|reels?|tv)\/[\w-]+/, link: /^\/([\w.]+\/)?(p|reels?|tv)\/[\w-]+\/?$/ },
-    { re: /(^|\.)(facebook\.com|fb\.watch)$/i, name: 'Facebook', self: /^\/(watch|reel|[\w.]+\/videos)\b|\/videos\/\d+/, link: /\/(videos|reel)\/[\w.-]+|\/watch\/?\?v=\d+|\/posts\/[\w]+|story_fbid=/ },
-    { re: /(^|\.)tiktok\.com$/i, name: 'TikTok', self: /^\/@[\w.-]+\/video\/\d+/, link: /^\/@[\w.-]+\/video\/\d+/ },
+    { re: /(^|\.)(x\.com|twitter\.com|mobile\.twitter\.com)$/i, name: 'X', self: /^\/(\w+|i\/web|i)\/status\/\d+/, link: /^\/(\w+|i\/web|i)\/status\/\d+\/?$/ },
+    { re: /(^|\.)instagram\.com$/i, name: 'Instagram', self: /^\/([\w.]+\/)?(p|reels?|tv)\/[\w-]+/, link: /^\/([\w.]+\/)?(p|reels?|tv)\/[\w-]+\/?$/ },
+    { re: /(^|\.)(facebook\.com|fb\.watch)$/i, name: 'Facebook', self: /^\/(watch\/?\?v=|reel\/|share\/[vr]\/)|\/videos\/[\w.-]*\d/, link: /\/videos\/([\w.-]+\/)?\d+|\/reel\/\d+|\/watch\/?\?v=\d+|\/share\/[vr]\/\w+|\/posts\/\w+|story_fbid=|\/permalink\.php/ },
+    { re: /(^|\.)tiktok\.com$/i, name: 'TikTok', self: /^\/@[\w.-]*\/(video|photo)\/\d+/, link: /^\/@[\w.-]+\/video\/\d+/ },
     { re: /(^|\.)reddit\.com$/i, name: 'Reddit', self: /\/comments\/\w+/, link: /\/comments\/\w+/ },
     { re: /(^|\.)(threads\.net|threads\.com)$/i, name: 'Threads', self: /^\/@[\w.]+\/post\/[\w-]+/, link: /^\/@[\w.]+\/post\/[\w-]+\/?$/ },
     { re: /(^|\.)snapchat\.com$/i, name: 'Snapchat', self: /^\/(spotlight|@)/, link: /^\/spotlight\/[\w-]+/ },
@@ -78,45 +93,44 @@
     { re: /(^|\.)pinterest\.[a-z.]+$/i, name: 'Pinterest', self: /^\/pin\/\d+/, link: /^\/pin\/\d+/ },
   ];
   const social = SOCIAL.find(x => x.re.test(location.hostname));
-  /** رابط المنشور الذي يحتوي عنصر الفيديو (أو الصفحة نفسها إن كانت صفحة منشور) */
+  /** رابط المنشور الذي يحتوي عنصر الفيديو (أو الصفحة نفسها إن كانت صفحة منشور).
+   *  قاعدة الأمان: لا نصعد أبداً إلى عنصر يحتوي فيديو آخر، حتى لا نأخذ رابط منشور مجاور. */
   function postUrl(v) {
     if (!social) return null;
     const ok = (a) => { try { const u = new URL(a.href, location.href); return social.re.test(u.hostname) && social.link.test(u.pathname + u.search); } catch { return false; } };
     if (v) {
-      // X: رابط وقت التغريدة داخل نفس article هو رابطها الدائم
-      const art = v.closest('article, shreddit-post, [role="article"], [data-e2e="recommend-list-item-container"]');
-      if (art) {
-        if (art.getAttribute('permalink')) return new URL(art.getAttribute('permalink'), location.href).href;
-        const timed = [...art.querySelectorAll('a[href] time')].map(t => t.closest('a')).find(a => a && ok(a));
-        if (timed) return clean(timed.href);
+      const scopes = [];
+      for (let el = v, i = 0; el && el !== document.body && i < 40; el = up(el), i++) {
+        if (el !== v && countVideos(el) > 1) break;
+        scopes.push(el);
       }
-      // صعوداً من الفيديو حتى نجد أقرب رابط منشور
-      let el = v;
-      for (let i = 0; el && i < 25; i++, el = el.parentElement) {
+      const BOX = 'article, shreddit-post, [role="article"], [data-e2e="recommend-list-item-container"], [data-testid="tweet"]';
+      let box = null;
+      for (let el = v, i = 0; el && !box && i < 40; el = up(el), i++) if (el.matches && el.matches(BOX)) box = el;
+      if (box && countVideos(box) <= 1 && !scopes.includes(box)) scopes.push(box);
+      for (const el of scopes) {
+        // Reddit: الرابط الدائم في سمة permalink
+        const pl = el.getAttribute && el.getAttribute('permalink');
+        if (pl) return clean(new URL(pl, location.href).href);
+        // TikTok: رقم الفيديو في معرّف المشغّل (xgwrapper-0-7432…)
+        if (social.name === 'TikTok') {
+          const idEl = el.id && /\d{18,20}/.test(el.id) ? el : el.querySelector('[id*="xgwrapper"], [id*="-7"], [data-video-id]');
+          const m = idEl && /(\d{18,20})/.exec(idEl.id + ' ' + (idEl.getAttribute('data-video-id') || ''));
+          if (m) {
+            const au = /\/@([\w.-]+)/.exec([...el.querySelectorAll('a[href*="/@"]')].map(x => x.getAttribute('href')).find(Boolean) || '');
+            return `https://www.tiktok.com/@${au ? au[1] : ''}/video/${m[1]}`;
+          }
+        }
+        // X وغيره: رابط الوقت هو الرابط الدائم للمنشور
+        const timed = [...el.querySelectorAll('a[href] time')].map(t => t.closest('a')).find(a => a && ok(a));
+        if (timed) return clean(timed.href);
         const a = el.matches?.('a[href]') && ok(el) ? el : [...el.querySelectorAll('a[href]')].find(ok);
         if (a) return clean(a.href);
       }
     }
-    if (v && social.name === 'TikTok') { const t = tiktokId(v); if (t) return t; }
-    return social.self.test(location.pathname) ? clean(location.href) : null;
+    return social.self.test(location.pathname + location.search) ? clean(location.href) : null;
   }
-  /** TikTok: مشغّل الصفحة الرئيسية لا يحوي رابطاً؛ رقم الفيديو موجود في معرّفات العناصر (مثل xgwrapper-0-7432…) */
-  function tiktokId(v) {
-    let el = v;
-    for (let i = 0; el && i < 20; i++, el = el.parentElement) {
-      const all = [el, ...el.querySelectorAll('[id]')].slice(0, 300);
-      for (const n of all) {
-        const m = /(?:^|\D)(\d{18,20})(?:\D|$)/.exec((n.id || '') + ' ' + (n.getAttribute?.('data-video-id') || ''));
-        if (m) {
-          let a = null;
-          for (let up = el, j = 0; up && !a && j < 8; up = up.parentElement, j++) a = [...up.querySelectorAll('a[href*="/@"]')].map(x => /\/@([\w.-]+)/.exec(x.getAttribute('href') || '')).find(Boolean);
-          return `https://www.tiktok.com/@${a ? a[1] : ''}/video/${m[1]}`;
-        }
-      }
-    }
-    return null;
-  }
-  function clean(u) { try { const x = new URL(u, location.href); if (!/story_fbid|[?&]v=/.test(x.search)) x.search = ''; x.hash = ''; return x.href.replace(/(\/status\/\d+)\/(photo|video)\/\d+\/?$/, '$1'); } catch { return u; } }
+  function clean(u) { try { const x = new URL(u, location.href); const keep = new URLSearchParams(); for (const k of ['v', 'story_fbid', 'id']) if (x.searchParams.get(k)) keep.set(k, x.searchParams.get(k)); x.search = keep.toString(); x.hash = ''; return x.href.replace(/(\/status\/\d+)\/(photo|video)\/\d+\/?$/, '$1'); } catch { return u; } }
   const pageTitle = () => (document.title || 'video').replace(/^\(\d+\)\s*/, '').replace(/\s*[-|]\s*YouTube\s*$/i, '').trim();
 
   function candidates() {
@@ -148,7 +162,7 @@
       const own = sorted.filter(x => x.url === src);
       if (own.length) return own;
       // صفحة المتابعة نفسها (مثل tiktok.com/ar) ليست فيديو: لا نرسلها
-      if (!social.self.test(location.pathname)) return [];
+      if (!social.self.test(location.pathname + location.search)) return [];
     }
     if (!UNSUPPORTED) sorted.push({ url: location.href, kind: 'ytdlp', label: ar ? 'الصفحة' : 'Page', size: -1, title: ar ? 'استخراج الفيديو من هذه الصفحة' : 'Extract video from this page', page: true });
     return sorted;
@@ -211,13 +225,13 @@
     v.addEventListener('play', () => show(v));
     v.addEventListener('mouseleave', () => { hideTimer = setTimeout(hide, 2500); });
   }
-  const scan = () => document.querySelectorAll('video, audio[controls]').forEach(hook);
+  const scan = () => { document.querySelectorAll('audio[controls]').forEach(hook); allVideos().forEach(hook); };
   scan();
   new MutationObserver(() => scan()).observe(document.documentElement, { childList: true, subtree: true });
   // المشغلات تغطي عنصر الفيديو بطبقات؛ نتتبع حركة الفأرة فوق مساحته
   document.addEventListener('mousemove', (e) => {
     if (!enabled) return;
-    for (const v of document.querySelectorAll('video')) {
+    for (const v of allVideos()) {
       const r = v.getBoundingClientRect();
       if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) { if (current !== v || host.style.display === 'none') show(v); return; }
     }
@@ -233,7 +247,7 @@
       // للنافذة المنبثقة: الفيديو الأوضح على الشاشة ← رابط منشوره (أو رابط يوتيوب أو الصفحة)
       if (YT) { reply({ url: ytUrl(), social: false }); return; }
       let best = null, area = 0;
-      for (const v of document.querySelectorAll('video')) {
+      for (const v of allVideos()) {
         const r = v.getBoundingClientRect();
         const a = Math.max(0, Math.min(r.right, innerWidth) - Math.max(r.left, 0)) * Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0));
         if (a > area) { area = a; best = v; }
