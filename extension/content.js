@@ -209,6 +209,19 @@
   B.runtime.onMessage.addListener((msg, _s, reply) => {
     if (msg.type === 'media') { items = msg.items || []; if ($('m').classList.contains('on')) renderMenu(); }
     if (msg.type === 'toast') toast(msg.msg);
+    if (msg.type === 'pageVideo') {
+      // للنافذة المنبثقة: الفيديو الأوضح على الشاشة ← رابط منشوره (أو رابط يوتيوب أو الصفحة)
+      if (YT) { reply({ url: ytUrl(), social: false }); return; }
+      let best = null, area = 0;
+      for (const v of document.querySelectorAll('video')) {
+        const r = v.getBoundingClientRect();
+        const a = Math.max(0, Math.min(r.right, innerWidth) - Math.max(r.left, 0)) * Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0));
+        if (a > area) { area = a; best = v; }
+      }
+      const post = postUrl(best || current);
+      reply({ url: post || location.href, social: !!social, name: social ? social.name : '', post: !!post });
+      return;
+    }
     if (msg.type === 'collectLinks') {
       const sel = window.getSelection();
       let anchors = [...document.querySelectorAll('a[href]')];

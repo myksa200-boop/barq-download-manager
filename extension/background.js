@@ -210,6 +210,7 @@ try {
   }, { urls: ['<all_urls>'], types: ['media', 'xmlhttprequest', 'other', 'object'] }, extra);
 } catch (e) { console.warn('Barq: header capture unavailable', e); }
 
+const SOCIAL_RE = /^https?:\/\/([\w-]+\.)*(x\.com|twitter\.com|instagram\.com|facebook\.com|fb\.watch|tiktok\.com|reddit\.com|threads\.net|threads\.com|snapchat\.com|linkedin\.com|pinterest\.[a-z.]+)(\/|$)/i;
 function addMedia(tabId, item) {
   const list = media.get(tabId) || [];
   if (list.some(x => x.url === item.url)) return;
@@ -217,6 +218,8 @@ function addMedia(tabId, item) {
   if (list.length > 40) list.pop();
   media.set(tabId, list);
   B.tabs.sendMessage(tabId, { type: 'media', items: list }).catch(() => {});
+  // مواقع التواصل: الملفات الملتقطة تخص كل منشورات الصفحة، فلا نعرض عدداً مربكاً على الأيقونة
+  if (SOCIAL_RE.test(item.page || '')) return;
   B.action.setBadgeText({ tabId, text: String(list.length) }).catch?.(() => {});
   B.action.setBadgeBackgroundColor({ tabId, color: '#2563eb' }).catch?.(() => {});
 }
@@ -230,7 +233,7 @@ B.webRequest.onHeadersReceived.addListener((d) => {
   if (cr) size = Number(cr[1]); else if (hdr('content-length')) size = Number(hdr('content-length'));
   const c = classify(d.url, mime, size);
   if (!c) return;
-  addMedia(d.tabId, { url: d.url.split('#')[0], mime, size, frame: d.frameId, ...c });
+  addMedia(d.tabId, { url: d.url.split('#')[0], mime, size, frame: d.frameId, page: d.initiator || d.documentUrl || '', ...c });
 }, { urls: ['<all_urls>'], types: ['media', 'xmlhttprequest', 'other', 'object', 'sub_frame'] }, ['responseHeaders']);
 
 B.tabs.onUpdated.addListener((tabId, ch) => { if (ch.url) { media.delete(tabId); B.action.setBadgeText({ tabId, text: '' }).catch?.(() => {}); } });

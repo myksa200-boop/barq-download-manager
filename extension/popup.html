@@ -2,14 +2,28 @@
 <html lang="ar" dir="rtl">
 <head><meta charset="UTF-8"><link rel="stylesheet" href="popup.css"></head>
 <body>
-  <header><img src="icons/32.png" alt=""><b>Barq</b><small id="ver" class="ver"></small><span id="st" class="st">…</span></header>
+  <header>
+    <img src="icons/32.png" alt="">
+    <div class="ttl"><b>برق</b><small id="ver"></small></div>
+    <span id="st" class="st"><i></i><span id="stt">…</span></span>
+  </header>
   <div id="warn" class="warn hidden"></div>
-  <label class="row"><input type="checkbox" id="intercept"> اعتراض تنزيلات المتصفح</label>
-  <label class="row"><input type="checkbox" id="panel"> إظهار زر «تنزيل هذا الفيديو»</label>
-  <label class="row">المنفذ <input type="text" inputmode="numeric" dir="ltr" id="port"> <small id="auto" class="hint"></small></label>
-  <button id="page">تنزيل فيديو هذه الصفحة (YouTube وغيره)</button>
-  <button id="all">تنزيل كل روابط هذه الصفحة</button>
-  <div id="media"></div>
+
+  <button id="page" class="primary"><span class="ic">⬇</span><span id="pageLbl">تنزيل فيديو هذه الصفحة</span></button>
+
+  <section id="mediaBox" class="hidden">
+    <h4>ملفات في هذه الصفحة</h4>
+    <div id="media"></div>
+  </section>
+
+  <div class="links"><a href="#" id="all">تنزيل كل روابط الصفحة</a></div>
+
+  <details id="set">
+    <summary>الإعدادات</summary>
+    <label class="sw"><span>اعتراض تنزيلات المتصفح</span><input type="checkbox" id="intercept"><i></i></label>
+    <label class="sw"><span>زر «تنزيل هذا الفيديو» فوق المقاطع</span><input type="checkbox" id="panel"><i></i></label>
+    <label class="port"><span>منفذ الاتصال</span><input type="text" inputmode="numeric" dir="ltr" id="port"><small id="auto"></small></label>
+  </details>
   <p class="hint" id="hint"></p>
   <script src="popup.js"></script>
 </body>
