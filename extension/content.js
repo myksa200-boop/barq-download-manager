@@ -65,6 +65,41 @@
     if (u.searchParams.get('list')) return `https://www.youtube.com/playlist?list=${u.searchParams.get('list')}`;
     return location.href;
   }
+  /* مواقع التواصل: الصفحة (مثل x.com/home) تحوي عشرات المنشورات، فنأخذ رابط المنشور الذي يحتوي الفيديو نفسه */
+  const SOCIAL = [
+    { re: /(^|\.)(x\.com|twitter\.com)$/i, name: 'X', self: /^\/[\w]+\/status\/\d+/, link: /^\/[\w]+\/status\/\d+\/?$/ },
+    { re: /(^|\.)instagram\.com$/i, name: 'Instagram', self: /^\/(p|reels?|tv)\/[\w-]+/, link: /^\/([\w.]+\/)?(p|reels?|tv)\/[\w-]+\/?$/ },
+    { re: /(^|\.)(facebook\.com|fb\.watch)$/i, name: 'Facebook', self: /^\/(watch|reel|[\w.]+\/videos)\b|\/videos\/\d+/, link: /\/(videos|reel)\/[\w.-]+|\/watch\/?\?v=\d+|\/posts\/[\w]+|story_fbid=/ },
+    { re: /(^|\.)tiktok\.com$/i, name: 'TikTok', self: /^\/@[\w.-]+\/video\/\d+/, link: /^\/@[\w.-]+\/video\/\d+/ },
+    { re: /(^|\.)reddit\.com$/i, name: 'Reddit', self: /\/comments\/\w+/, link: /\/comments\/\w+/ },
+    { re: /(^|\.)(threads\.net|threads\.com)$/i, name: 'Threads', self: /^\/@[\w.]+\/post\/[\w-]+/, link: /^\/@[\w.]+\/post\/[\w-]+\/?$/ },
+    { re: /(^|\.)snapchat\.com$/i, name: 'Snapchat', self: /^\/(spotlight|@)/, link: /^\/spotlight\/[\w-]+/ },
+    { re: /(^|\.)linkedin\.com$/i, name: 'LinkedIn', self: /^\/(posts|feed\/update)\//, link: /^\/(posts\/[\w-]+|feed\/update\/[\w:%-]+)/ },
+    { re: /(^|\.)pinterest\.[a-z.]+$/i, name: 'Pinterest', self: /^\/pin\/\d+/, link: /^\/pin\/\d+/ },
+  ];
+  const social = SOCIAL.find(x => x.re.test(location.hostname));
+  /** رابط المنشور الذي يحتوي عنصر الفيديو (أو الصفحة نفسها إن كانت صفحة منشور) */
+  function postUrl(v) {
+    if (!social) return null;
+    const ok = (a) => { try { const u = new URL(a.href, location.href); return social.re.test(u.hostname) && social.link.test(u.pathname + u.search); } catch { return false; } };
+    if (v) {
+      // X: رابط وقت التغريدة داخل نفس article هو رابطها الدائم
+      const art = v.closest('article, shreddit-post, [role="article"], [data-e2e="recommend-list-item-container"]');
+      if (art) {
+        if (art.getAttribute('permalink')) return new URL(art.getAttribute('permalink'), location.href).href;
+        const timed = [...art.querySelectorAll('a[href] time')].map(t => t.closest('a')).find(a => a && ok(a));
+        if (timed) return clean(timed.href);
+      }
+      // صعوداً من الفيديو حتى نجد أقرب رابط منشور
+      let el = v;
+      for (let i = 0; el && i < 25; i++, el = el.parentElement) {
+        const a = el.matches?.('a[href]') && ok(el) ? el : [...el.querySelectorAll('a[href]')].find(ok);
+        if (a) return clean(a.href);
+      }
+    }
+    return social.self.test(location.pathname) ? clean(location.href) : null;
+  }
+  function clean(u) { try { const x = new URL(u, location.href); if (!/story_fbid|[?&]v=/.test(x.search)) x.search = ''; x.hash = ''; return x.href.replace(/(\/status\/\d+)\/(photo|video)\/\d+\/?$/, '$1'); } catch { return u; } }
   const pageTitle = () => (document.title || 'video').replace(/^\(\d+\)\s*/, '').replace(/\s*[-|]\s*YouTube\s*$/i, '').trim();
 
   function candidates() {
@@ -85,7 +120,11 @@
     const rank = (x) => (x.url === src ? 0 : x.kind === 'hls' || x.kind === 'dash' ? 1 : /^audio/i.test(x.label || '') ? 3 : 2);
     const sorted = list.map((x, i) => [x, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(p => p[0]);
     // دائماً: خيار استخراج الفيديو من الصفحة نفسها عبر yt-dlp (يدعم أكثر من 1000 موقع)
-    if (!UNSUPPORTED) sorted.push({ url: location.href, kind: 'ytdlp', label: ar ? 'الصفحة' : 'Page', size: -1, title: ar ? 'استخراج الفيديو من هذه الصفحة' : 'Extract video from this page', page: true });
+    const post = postUrl(current);
+    if (post) {
+      // مواقع التواصل: المنشور أولاً (yt-dlp يجلب الفيديو مع الصوت وبأعلى جودة)
+      sorted.unshift({ url: post, kind: 'ytdlp', label: social.name, size: -1, title: ar ? 'تنزيل فيديو هذا المنشور' : 'Download this post\'s video' });
+    } else if (!UNSUPPORTED) sorted.push({ url: location.href, kind: 'ytdlp', label: ar ? 'الصفحة' : 'Page', size: -1, title: ar ? 'استخراج الفيديو من هذه الصفحة' : 'Extract video from this page', page: true });
     return sorted;
   }
   function renderMenu() {
