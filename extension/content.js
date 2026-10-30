@@ -97,7 +97,24 @@
         if (a) return clean(a.href);
       }
     }
+    if (v && social.name === 'TikTok') { const t = tiktokId(v); if (t) return t; }
     return social.self.test(location.pathname) ? clean(location.href) : null;
+  }
+  /** TikTok: مشغّل الصفحة الرئيسية لا يحوي رابطاً؛ رقم الفيديو موجود في معرّفات العناصر (مثل xgwrapper-0-7432…) */
+  function tiktokId(v) {
+    let el = v;
+    for (let i = 0; el && i < 20; i++, el = el.parentElement) {
+      const all = [el, ...el.querySelectorAll('[id]')].slice(0, 300);
+      for (const n of all) {
+        const m = /(?:^|\D)(\d{18,20})(?:\D|$)/.exec((n.id || '') + ' ' + (n.getAttribute?.('data-video-id') || ''));
+        if (m) {
+          let a = null;
+          for (let up = el, j = 0; up && !a && j < 8; up = up.parentElement, j++) a = [...up.querySelectorAll('a[href*="/@"]')].map(x => /\/@([\w.-]+)/.exec(x.getAttribute('href') || '')).find(Boolean);
+          return `https://www.tiktok.com/@${a ? a[1] : ''}/video/${m[1]}`;
+        }
+      }
+    }
+    return null;
   }
   function clean(u) { try { const x = new URL(u, location.href); if (!/story_fbid|[?&]v=/.test(x.search)) x.search = ''; x.hash = ''; return x.href.replace(/(\/status\/\d+)\/(photo|video)\/\d+\/?$/, '$1'); } catch { return u; } }
   const pageTitle = () => (document.title || 'video').replace(/^\(\d+\)\s*/, '').replace(/\s*[-|]\s*YouTube\s*$/i, '').trim();
@@ -130,6 +147,8 @@
       // منشور بلا رابط ظاهر: لا نخلط ملفات المنشورات الأخرى، نكتفي بمصدر الفيديو نفسه إن وُجد
       const own = sorted.filter(x => x.url === src);
       if (own.length) return own;
+      // صفحة المتابعة نفسها (مثل tiktok.com/ar) ليست فيديو: لا نرسلها
+      if (!social.self.test(location.pathname)) return [];
     }
     if (!UNSUPPORTED) sorted.push({ url: location.href, kind: 'ytdlp', label: ar ? 'الصفحة' : 'Page', size: -1, title: ar ? 'استخراج الفيديو من هذه الصفحة' : 'Extract video from this page', page: true });
     return sorted;
@@ -141,6 +160,7 @@
       const e = document.createElement('div'); e.className = 'empty';
       e.textContent = UNSUPPORTED
         ? (ar ? 'هذا الموقع يستخدم بثاً محمياً أو مشفراً (DRM) لا يمكن تنزيله' : 'This site uses protected/encrypted streaming (DRM) that cannot be downloaded')
+        : social ? (ar ? 'تعذّر معرفة رابط هذا الفيديو — افتح الفيديو نفسه (اضغط عليه) ثم حاول' : 'Could not find this video\'s link — open the video itself, then try again')
         : (ar ? 'لم يتم رصد ملف قابل للتنزيل بعد — شغّل الفيديو ثم حاول مجدداً' : 'No downloadable stream detected yet — play the video and try again');
       m.append(e); return;
     }
