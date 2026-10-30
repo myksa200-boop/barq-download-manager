@@ -158,14 +158,14 @@ B.contextMenus.onClicked.addListener(async (info, tab) => {
       if (/^https?:/i.test(src)) await sendToApp([{ url: src, referer: info.pageUrl || '' }]);
       else { const list = media.get(tab.id) || []; if (list[0]) await sendToApp([{ url: list[0].url, referer: info.pageUrl || '', kind: list[0].kind }]); }
     } else if (info.menuItemId === 'nz-all') {
-      const links = await B.tabs.sendMessage(tab.id, { type: 'collectLinks', selection: info.menuItemId === 'nz-all' && !!info.selectionText });
+      const links = await B.tabs.sendMessage(tab.id, { type: 'collectLinks', selection: info.menuItemId === 'nz-all' && !!info.selectionText }, { frameId: info.frameId || 0 });
       if (links && links.length) await sendToApp(links.map(u => ({ url: u, referer: tab.url })), true);
     }
   } catch (e) {
     notifyTab(tab?.id, 'تعذر الاتصال ببرنامج برق — تأكد أنه يعمل');
   }
 });
-function notifyTab(tabId, msg) { if (tabId != null) B.tabs.sendMessage(tabId, { type: 'toast', msg }).catch(() => {}); }
+function notifyTab(tabId, msg) { if (tabId != null) B.tabs.sendMessage(tabId, { type: 'toast', msg }, { frameId: 0 }).catch(() => {}); }
 
 /* ---------- 3) media sniffing ---------- */
 /* مواقع تستخدم بثاً مجزأً بروابط موقّعة لا يمكن تنزيله مباشرة */
@@ -236,7 +236,7 @@ B.webRequest.onHeadersReceived.addListener((d) => {
   addMedia(d.tabId, { url: d.url.split('#')[0], mime, size, frame: d.frameId, page: d.initiator || d.documentUrl || '', ...c });
 }, { urls: ['<all_urls>'], types: ['media', 'xmlhttprequest', 'other', 'object', 'sub_frame'] }, ['responseHeaders']);
 
-B.tabs.onUpdated.addListener((tabId, ch) => { if (ch.url) { media.delete(tabId); B.action.setBadgeText({ tabId, text: '' }).catch?.(() => {}); } });
+B.tabs.onUpdated.addListener((tabId, ch) => { if (ch.url) { media.delete(tabId); B.action.setBadgeText({ tabId, text: '' }).catch?.(() => {}); B.tabs.sendMessage(tabId, { type: 'media', items: [] }).catch(() => {}); } });
 B.tabs.onRemoved.addListener((tabId) => media.delete(tabId));
 
 /* ---------- messages from content script / popup ---------- */

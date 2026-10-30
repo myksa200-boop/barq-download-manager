@@ -22,7 +22,7 @@ const TYPE = { hls: 'بث', dash: 'بث', http: 'فيديو', audio: 'صوت' };
   $('port').onchange = (e) => { const n = Number(String(e.target.value).replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d))); B.storage.local.set({ port: n >= 1024 && n <= 65535 ? n : 46321 }); };
 
   // الفيديو الظاهر في الصفحة: في مواقع التواصل نأخذ رابط منشوره لا رابط الصفحة الرئيسية
-  const pv = await B.tabs.sendMessage(tab.id, { type: 'pageVideo' }).catch(() => null);
+  const pv = await B.tabs.sendMessage(tab.id, { type: 'pageVideo' }, { frameId: 0 }).catch(() => null);
   const target = pv?.url || tab.url;
   if (pv?.social) $('pageLbl').textContent = pv.post ? `تنزيل فيديو المنشور الظاهر (${pv.name})` : 'افتح المنشور أو مرّر إلى الفيديو';
   if (pv?.social && !pv.post) $('page').disabled = true;
@@ -34,7 +34,7 @@ const TYPE = { hls: 'بث', dash: 'بث', http: 'فيديو', audio: 'صوت' };
   $('page').onclick = () => send({ type: 'download', url: target, kind: 'ytdlp', referer: tab.url });
   $('all').onclick = async (e) => {
     e.preventDefault();
-    const links = await B.tabs.sendMessage(tab.id, { type: 'collectLinks' }).catch(() => []);
+    const links = await B.tabs.sendMessage(tab.id, { type: 'collectLinks' }, { frameId: 0 }).catch(() => []);
     if (links && links.length) send({ type: 'batch', urls: links, referer: tab.url });
     else $('hint').textContent = 'لا توجد روابط في هذه الصفحة';
   };
