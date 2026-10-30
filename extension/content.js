@@ -26,7 +26,7 @@
   </style>
   <div class="wrap" style="position:relative">
     <button class="btn" id="b"><span class="lg"><svg width="13" height="13" viewBox="0 0 32 32"><path d="M18 3 L8.6 18 H14.6 L12.4 27 L22.6 12 H16.6 Z" fill="#f59e0b"/></svg></span>
-      <span id="lbl">Download this video</span><span>▾</span><span class="x" id="x" title="Hide">✕</span></button>
+      <span id="lbl">Download this video</span><span id="arr">▾</span><span class="x" id="x" title="Hide">✕</span></button>
     <div class="menu" id="m"></div>
   </div>`;
   const $ = (id) => root.getElementById(id);
@@ -182,22 +182,47 @@
         : (ar ? 'لم يتم رصد ملف قابل للتنزيل بعد — شغّل الفيديو ثم حاول مجدداً' : 'No downloadable stream detected yet — play the video and try again');
       m.append(e); return;
     }
-    for (const it of list) {
+    list.forEach((it, i) => {
       const row = document.createElement('div'); row.className = 'it';
-      const name = it.title || decodeURIComponent((it.url.split('?')[0].split('/').pop() || 'video')).slice(0, 60);
+      const raw = decodeURIComponent((it.url.split('?')[0].split('/').pop() || ''));
+      // أسماء ملفات البث عشوائية (مثل 9VYGwq….m3u8): نعرض عنوان الصفحة بدلها
+      const name = it.title || (it.kind === 'http' && /\.\w{2,4}$/.test(raw) && raw.length < 60 ? raw : title() + (list.length > 1 ? ` (${i + 1})` : ''));
       row.innerHTML = `<span class="n"><span class="tag"></span></span><span class="s"></span>`;
-      row.querySelector('.tag').textContent = it.label || it.kind;
+      row.querySelector('.tag').textContent = typeLabel(it);
       row.querySelector('.n').append(document.createTextNode(name));
-      row.querySelector('.s').textContent = (it.kind === 'hls' || it.kind === 'dash' || it.kind === 'ytdlp') ? (ar ? 'اختيار الجودة' : 'choose quality') : fmt(it.size);
-      row.onclick = async (e) => {
-        e.stopPropagation(); m.classList.remove('on');
-        const ext = (/\.(\w{2,4})(\?|$)/.exec(it.url.split('?')[0]) || [, 'mp4'])[1];
-        const fileName = it.kind === 'ytdlp' ? '' : it.kind === 'hls' ? title() + '.ts' : it.kind === 'dash' ? title() + '.mp4' : (/\.\w{2,4}$/.test(name) && !/^(index|master|playlist|video|manifest)\./i.test(name) ? name : title() + '.' + ext);
-        const r = await B.runtime.sendMessage({ type: 'download', url: it.url, kind: it.kind, referer: location.href, fileName });
-        if (!r || !r.ok) toast(r?.error || 'Barq?');
-      };
+      row.querySelector('.s').textContent = fmt(it.size);
+      row.onclick = (e) => { e.stopPropagation(); m.classList.remove('on'); download(it); };
       m.append(row);
-    }
+    });
+  }
+  /** الخيار الوحيد المؤكد إن وُجد: مصدر الفيديو الذي تحت المؤشر، أو ملف وحيد، أو استخراج الصفحة إن لم يُرصد شيء */
+  function directPick() {
+    const list = candidates();
+    if (list.length <= 1) return list[0] || null;
+    const src = current ? (current.currentSrc || current.src || '') : '';
+    const own = list.find(x => x.url === src && !x.page);
+    if (own) return own;
+    const files = list.filter(x => !x.page);
+    if (files.length === 1) return files[0];
+    if (!files.length) return list.find(x => x.page) || null;
+    return null;   // عدة ملفات مختلفة فعلاً ← قائمة للاختيار
+  }
+  function typeLabel(it) {
+    if (it.page) return ar ? 'الصفحة' : 'Page';
+    if (it.kind === 'ytdlp') return it.label || 'Video';
+    if (/^audio/i.test(it.label || '') || /^audio/i.test(it.mime || '')) return ar ? 'صوت' : 'Audio';
+    if (it.kind === 'hls' || it.kind === 'dash') return ar ? 'بث' : 'Stream';
+    return ar ? 'فيديو' : 'Video';
+  }
+  async function download(it) {
+    const raw = decodeURIComponent((it.url.split('?')[0].split('/').pop() || ''));
+    const ext = (/\.(\w{2,4})$/.exec(raw) || [, 'mp4'])[1];
+    const fileName = it.kind === 'ytdlp' ? '' : it.kind === 'hls' ? title() + '.ts' : it.kind === 'dash' ? title() + '.mp4' : (/\.\w{2,4}$/.test(raw) && !/^(index|master|playlist|video|manifest)\./i.test(raw) ? raw : title() + '.' + ext);
+    const lbl = $('lbl'); const old = lbl.textContent;
+    lbl.textContent = ar ? 'جارٍ الفتح…' : 'Opening…';
+    const r = await B.runtime.sendMessage({ type: 'download', url: it.url, kind: it.kind, referer: location.href, fileName }).catch(() => null);
+    lbl.textContent = old;
+    if (!r || !r.ok) toast(r?.error || (ar ? 'برنامج برق لا يعمل — شغّله ثم أعد المحاولة' : 'Barq is not running'));
   }
   function toast(msg) {
     const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; root.append(t); setTimeout(() => t.remove(), 4000);
@@ -213,12 +238,19 @@
   function show(v) {
     if (!enabled) return;
     if (YT && v.tagName === 'VIDEO' && isMainYtPlayer(v)) ytHover = null;
-    current = v; clearTimeout(hideTimer); place(v);
+    current = v; clearTimeout(hideTimer);
+    try { $('arr').style.display = directPick() ? 'none' : ''; } catch { /* ignore */ }
+    place(v);
   }
   $('b').addEventListener('click', (e) => {
     e.stopPropagation();
     if (e.composedPath().includes($('x'))) { enabled = false; hide(); return; }
-    scanPage(); renderMenu(); $('m').classList.toggle('on');
+    if ($('m').classList.contains('on')) { $('m').classList.remove('on'); return; }
+    scanPage();
+    const pick = directPick();
+    // فيديو واحد (يوتيوب، مواقع التواصل، أغلب المواقع): نفتح نافذة التنزيل مباشرة دون قائمة
+    if (pick) { download(pick); return; }
+    renderMenu(); $('m').classList.add('on');
   });
   host.addEventListener('mouseenter', () => clearTimeout(hideTimer));
   host.addEventListener('mouseleave', () => { hideTimer = setTimeout(hide, 2500); });
