@@ -122,9 +122,16 @@
     // دائماً: خيار استخراج الفيديو من الصفحة نفسها عبر yt-dlp (يدعم أكثر من 1000 موقع)
     const post = postUrl(current);
     if (post) {
-      // مواقع التواصل: المنشور أولاً (yt-dlp يجلب الفيديو مع الصوت وبأعلى جودة)
-      sorted.unshift({ url: post, kind: 'ytdlp', label: social.name, size: -1, title: ar ? 'تنزيل فيديو هذا المنشور' : 'Download this post\'s video' });
-    } else if (!UNSUPPORTED) sorted.push({ url: location.href, kind: 'ytdlp', label: ar ? 'الصفحة' : 'Page', size: -1, title: ar ? 'استخراج الفيديو من هذه الصفحة' : 'Extract video from this page', page: true });
+      // مواقع التواصل: خيار واحد فقط = فيديو هذا المنشور (yt-dlp يجلب الفيديو مع الصوت وبأعلى جودة).
+      // ملفات m3u8 الملتقطة تعود لكل المنشورات في الصفحة فلا نعرضها حتى لا تختلط.
+      return [{ url: post, kind: 'ytdlp', label: social.name, size: -1, title: ar ? 'تنزيل فيديو هذا المنشور' : 'Download this post\'s video' }];
+    }
+    if (social) {
+      // منشور بلا رابط ظاهر: لا نخلط ملفات المنشورات الأخرى، نكتفي بمصدر الفيديو نفسه إن وُجد
+      const own = sorted.filter(x => x.url === src);
+      if (own.length) return own;
+    }
+    if (!UNSUPPORTED) sorted.push({ url: location.href, kind: 'ytdlp', label: ar ? 'الصفحة' : 'Page', size: -1, title: ar ? 'استخراج الفيديو من هذه الصفحة' : 'Extract video from this page', page: true });
     return sorted;
   }
   function renderMenu() {
