@@ -164,8 +164,27 @@ function friendlyYtdlpError(text) {
   if (/Unsupported URL|No video formats found|Unable to extract/i.test(t)) return 'لم يتم العثور على فيديو قابل للتنزيل في هذه الصفحة';
   if (/HTTP Error 403/i.test(t)) return 'رفض الخادم الطلب (403). حدّث yt-dlp من الخيارات ← التنزيلات، ثم أعد المحاولة';
   if (/HTTP Error 429|Too Many Requests/i.test(t)) return 'طلبات كثيرة (429): انتظر قليلاً ثم أعد المحاولة';
+  if (/timed out|ETIMEDOUT|getaddrinfo|ENOTFOUND|Connection reset|network/i.test(t)) return 'تعذّر الاتصال بالموقع: تحقّق من الإنترنت ثم أعد المحاولة';
   const m = t.match(/ERROR:\s*(?:\[[^\]]+\]\s*)?(?:[\w-]+:\s*)?(.+)/);
-  return m ? m[1].trim().slice(0, 300) : (t.trim().split(/\r?\n/).pop() || 'فشل yt-dlp').slice(0, 300);
+  if (m) return m[1].trim().slice(0, 300);
+  // لا نعرض أبداً سطر الأمر الخام (Command failed: …)
+  return 'تعذّر استخراج فيديو من هذا الرابط. تأكد أنه رابط فيديو (وليس الصفحة الرئيسية للموقع)';
+}
+
+/** روابط صفحات رئيسية/خلاصات ليست فيديو: نرد برسالة واضحة دون تشغيل yt-dlp */
+function notAVideoPage(url) {
+  let u; try { u = new URL(url); } catch { return null; }
+  const h = u.hostname.replace(/^(www|m|mobile)\./, ''); const p = u.pathname.replace(/\/+$/, '') || '/';
+  const feed = {
+    'youtube.com': /^\/($|feed\/|results$|gaming$|$)/,
+    'x.com': /^\/(home|explore|notifications|search|i\/bookmarks)?$/, 'twitter.com': /^\/(home|explore)?$/,
+    'tiktok.com': /^\/(foryou|following|explore|ar|en)?$/,
+    'instagram.com': /^\/(explore|reels)?$/, 'facebook.com': /^\/(watch|reel)?$/,
+  }[h];
+  if (!feed || !feed.test(p)) return null;
+  if (h === 'youtube.com' && (u.searchParams.get('v') || u.searchParams.get('list'))) return null;
+  if (h === 'facebook.com' && u.searchParams.get('v')) return null;
+  return 'هذا رابط الصفحة الرئيسية وليس فيديو. مرّر المؤشر على الفيديو أو مصغّرته ثم اضغط زر «تنزيل هذا الفيديو»، أو افتح الفيديو نفسه';
 }
 
 /** معلومات الفيديو أو قائمة التشغيل (yt-dlp -J) */
@@ -174,6 +193,8 @@ async function ytdlpInfo(components, rec, { timeout = 120000 } = {}) {
   const cookieFile = await writeCookies(rec, path.join(components.binDir, '..', 'tmp'));
   let u;
   try { u = new URL(rec.url); } catch { throw new Error('رابط غير صالح'); }
+  const nv = notAVideoPage(rec.url);
+  if (nv) throw new Error(nv);
   const isList = u.searchParams.has('list') && !u.searchParams.has('v') || /\/playlist$/.test(u.pathname);
   const args = ['-J', ...(isList ? ['--flat-playlist'] : ['--no-playlist']), ...commonArgs(rec)];
   if (cookieFile) args.push('--cookies', cookieFile);

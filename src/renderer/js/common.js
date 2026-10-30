@@ -82,7 +82,7 @@
     if (!box) { box = h('div', { id: 'toasts', class: 'toasts' }); document.body.append(box); }
     const el = h('div', { class: 'toast' + (err ? ' err' : '') }, msg);
     box.append(el);
-    setTimeout(() => el.remove(), err ? 6000 : 3200);
+    setTimeout(() => el.remove(), err ? 6000 : Math.max(3200, String(msg).length * 70));
   }
   function chime() {
     try {

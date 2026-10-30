@@ -135,6 +135,10 @@
 
   function candidates() {
     if (YT) {
+      // مصغّرة أو معاينة في الصفحة الرئيسية/البحث: رابط الفيديو الذي تحت المؤشر، لا رابط الصفحة
+      const onPlayer = current && current.closest && isMainYtPlayer(current);
+      const isWatch = /^\/(watch|shorts\/|embed\/)/.test(location.pathname);
+      if (ytHover && !(onPlayer && isWatch)) return [{ url: ytHover.url, kind: 'ytdlp', label: 'YouTube', size: -1, title: ytHover.title || pageTitle() }];
       const u = ytUrl();
       const out = [{ url: u, kind: 'ytdlp', label: 'YouTube', size: -1, title: pageTitle() }];
       const lst = new URL(location.href).searchParams.get('list');
@@ -208,6 +212,7 @@
   function hide() { host.style.display = 'none'; $('m').classList.remove('on'); }
   function show(v) {
     if (!enabled) return;
+    if (YT && v.tagName === 'VIDEO' && isMainYtPlayer(v)) ytHover = null;
     current = v; clearTimeout(hideTimer); place(v);
   }
   $('b').addEventListener('click', (e) => {
@@ -218,6 +223,43 @@
   host.addEventListener('mouseenter', () => clearTimeout(hideTimer));
   host.addEventListener('mouseleave', () => { hideTimer = setTimeout(hide, 2500); });
   document.addEventListener('click', () => $('m').classList.remove('on'));
+
+  /* يوتيوب: زر التنزيل فوق أي مصغّرة فيديو عند تمرير المؤشر (بدون فتح الفيديو) */
+  let ytHover = null;
+  // المشغّل الرئيسي في صفحة المشاهدة/شورتس (وليس معاينة المصغّرات التي تستخدم مشغّلاً مشابهاً)
+  const isMainYtPlayer = (el) => /^\/(watch|shorts\/|embed\/)/.test(location.pathname) && !!el.closest('#movie_player, #shorts-player, ytd-reel-video-renderer') && !el.closest('ytd-video-preview, #video-preview, #inline-preview-player, ytd-rich-item-renderer, ytd-compact-video-renderer');
+  const YT_LINK = 'a[href*="/watch?v="], a[href^="/shorts/"], a[href*="youtube.com/shorts/"]';
+  function ytLinkUrl(a) {
+    try {
+      const u = new URL(a.href, location.href);
+      const sh = /^\/shorts\/([\w-]{6,})/.exec(u.pathname);
+      if (sh) return `https://www.youtube.com/shorts/${sh[1]}`;
+      const v = u.searchParams.get('v');
+      return v ? `https://www.youtube.com/watch?v=${v}` : null;
+    } catch { return null; }
+  }
+  function ytTitle(a) {
+    const box = a.closest('ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-playlist-video-renderer, ytd-reel-item-renderer, ytm-shorts-lockup-view-model, yt-lockup-view-model, ytd-video-preview') || a;
+    const t = box.querySelector('#video-title, [id="video-title"], h3, .yt-lockup-metadata-view-model-wiz__title, [title]');
+    return ((t && (t.getAttribute('title') || t.textContent)) || a.getAttribute('title') || a.getAttribute('aria-label') || '').trim().slice(0, 150);
+  }
+  let lastYtA = null;
+  const onYtHover = (e) => {
+    if (!enabled) return;
+    const a = e.target.closest && e.target.closest(YT_LINK);
+    if (!a || (a === lastYtA && host.style.display !== 'none')) return;
+    lastYtA = a;
+    const url = ytLinkUrl(a); if (!url) return;
+    // المعاينة التي تعمل فوق المصغّرة تحتفظ بنفس الرابط
+    const area = a.closest('ytd-thumbnail, yt-thumbnail-view-model, ytd-video-preview, .ytThumbnailViewModelHost') || a;
+    const r = area.getBoundingClientRect();
+    if (r.width < 150 || r.height < 80) return;
+    if (isMainYtPlayer(area)) return;
+    ytHover = { url, title: ytTitle(a) };
+    if (current !== area || host.style.display === 'none') show(area);
+    area.addEventListener('mouseleave', () => { lastYtA = null; hideTimer = setTimeout(hide, 1500); }, { once: true });
+  };
+  if (YT) { document.addEventListener('mouseover', onYtHover, { passive: true }); document.addEventListener('mousemove', onYtHover, { passive: true }); }
 
   function hook(v) {
     if (v.__nz) return; v.__nz = true;
@@ -245,7 +287,11 @@
     if (msg.type === 'toast') toast(msg.msg);
     if (msg.type === 'pageVideo') {
       // للنافذة المنبثقة: الفيديو الأوضح على الشاشة ← رابط منشوره (أو رابط يوتيوب أو الصفحة)
-      if (YT) { reply({ url: ytUrl(), social: false }); return; }
+      if (YT) {
+        const isVid = /^\/(watch|shorts\/|embed\/|playlist|live\/)/.test(location.pathname);
+        reply(isVid ? { url: ytUrl(), social: false } : ytHover ? { url: ytHover.url, social: false } : { url: location.href, social: false, notVideo: true });
+        return;
+      }
       let best = null, area = 0;
       for (const v of allVideos()) {
         const r = v.getBoundingClientRect();

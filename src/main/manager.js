@@ -335,16 +335,20 @@ class Manager extends EventEmitter {
   }
 
   /* ------------ queues ------------ */
+  /** يعيد عدد التنزيلات التي ستعمل؛ 0 = القائمة فارغة (لا شيء غير مكتمل فيها) */
   startQueue(qid = 'main') {
+    const pending = this.db.downloads.all().filter(d => d.queueId === qid && d.status !== 'complete');
+    if (!pending.length) return 0;
     this.runningQueues.add(qid);
-    for (const d of this.db.downloads.all()) {
-      if (d.queueId === qid && ['stopped', 'paused', 'error'].includes(d.status) && !this.tasks.has(d._id)) {
+    for (const d of pending) {
+      if (['stopped', 'paused', 'error'].includes(d.status) && !this.tasks.has(d._id)) {
         this.db.downloads.update(d._id, { status: 'queued' });
       }
     }
     this.emit('reload');
     this.emit('queues', [...this.runningQueues]);
     this._pump();
+    return pending.length;
   }
 
   async stopQueue(qid = 'main') {

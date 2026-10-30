@@ -280,7 +280,7 @@
     } else if (view.type === 'queue') {
       const run = S.runningQueues.has(view.id);
       showMenu([
-        { label: t('startNowQ'), disabled: run, action: () => api.call('startQueue', view.id) },
+        { label: t('startNowQ'), disabled: run, action: () => startQueue(view.id) },
         { label: t('stopNowQ'), disabled: !run, action: () => api.call('stopQueue', view.id) },
         '-',
         { label: t('scheduler'), action: () => DLG.scheduler(view.id) },
@@ -312,6 +312,14 @@
     tb('stopQueue').disabled = !S.runningQueues.size;
   }
 
+  async function startQueue(qid) {
+    const n = await api.call('startQueue', qid);
+    if (!n) {
+      const q = S.queues.find(x => x._id === qid);
+      toast(t('queueEmpty', q ? t(q.name) : ''));
+    }
+  }
+
   /* ================= commands ================= */
   async function cmd(c) {
     const items = sel();
@@ -333,7 +341,7 @@
         case 'deleteCompleted': return api.call('removeCompleted');
         case 'options': return DLG.options();
         case 'scheduler': return DLG.scheduler(S.view.type === 'queue' ? S.view.id : 'main');
-        case 'startQueue': return api.call('startQueue', S.view.type === 'queue' ? S.view.id : 'main');
+        case 'startQueue': return startQueue(S.view.type === 'queue' ? S.view.id : 'main');
         case 'stopQueue': return api.call('stopQueue', S.view.type === 'queue' && S.runningQueues.has(S.view.id) ? S.view.id : [...S.runningQueues][0]);
         default: return null;
       }
@@ -374,7 +382,7 @@
       { label: t('deleteCompleted'), action: () => cmd('deleteCompleted') },
       '-',
       { label: t('scheduler'), action: () => cmd('scheduler') },
-      { label: t('startQueue'), sub: S.queues.map(q => ({ label: t(q.name), disabled: S.runningQueues.has(q._id), action: () => api.call('startQueue', q._id) })) },
+      { label: t('startQueue'), sub: S.queues.map(q => ({ label: t(q.name), disabled: S.runningQueues.has(q._id), action: () => startQueue(q._id) })) },
       { label: t('stopQueue'), sub: S.queues.map(q => ({ label: t(q.name), disabled: !S.runningQueues.has(q._id), action: () => api.call('stopQueue', q._id) })) },
       '-',
       { label: t('speedLimiter'), sub: [

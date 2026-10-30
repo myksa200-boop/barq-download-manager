@@ -26,6 +26,7 @@ const TYPE = { hls: 'بث', dash: 'بث', http: 'فيديو', audio: 'صوت' };
   const target = pv?.url || tab.url;
   if (pv?.social) $('pageLbl').textContent = pv.post ? `تنزيل فيديو المنشور الظاهر (${pv.name})` : 'افتح المنشور أو مرّر إلى الفيديو';
   if (pv?.social && !pv.post) $('page').disabled = true;
+  if (pv?.notVideo) { $('pageLbl').textContent = 'افتح فيديو أو مرّر المؤشر على مصغّرته'; $('page').disabled = true; }
   const send = async (msg) => {
     const r = await B.runtime.sendMessage(msg);
     if (r && r.ok) window.close(); else $('hint').textContent = r?.error || 'تعذّر الاتصال بالبرنامج';
