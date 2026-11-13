@@ -13,8 +13,42 @@ let appAlive = false;
 const media = new Map();   // tabId -> [{url, mime, size, kind, label}]
 const skip = new Set();    // روابط نسمح للمتصفح بتنزيلها (عند تعذر الاتصال بالبرنامج)
 
-B.storage.local.get(DEFAULTS, (v) => { cfg = { ...DEFAULTS, ...v }; refreshApp(); });
-B.storage.onChanged.addListener((ch) => { for (const k in ch) cfg[k] = ch[k].newValue; refreshApp(); });
+/* الاقتران مع البرنامج: معرّف هذه النسخة من الإضافة + رمز سري يمنحه البرنامج بعد موافقة المستخدم.
+   يُحفظان في storage.local (وليس في cfg حتى لا يصلا إلى النافذة المنبثقة أو الصفحات). */
+let clientId = '';
+let pairKey = '';          // مفتاح استلام الرمز: يثبت أن من يستلمه هو من طلبه، حتى بعد إعادة تشغيل الخدمة
+let token = '';
+let lastError = '';        // سبب آخر فشل (للتشخيص، يظهر في النافذة المنبثقة)
+let trusted = false;       // البرنامج أثبت أنه يعرف الرمز (HMAC) — عندها فقط نرسل له الكوكيز
+let pairState = '';        // '' | 'waiting' | 'denied' | 'oldapp'
+let lastPairTry = 0;
+const randHex = (n) => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => b.toString(16).padStart(2, '0')).join('');
+async function hmacHex(key, msg) {
+  const enc = new TextEncoder();
+  const k = await crypto.subtle.importKey('raw', enc.encode(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', k, enc.encode(msg));
+  return Array.from(new Uint8Array(sig), b => b.toString(16).padStart(2, '0')).join('');
+}
+const authHeaders = () => ({ 'X-Barq-Client': clientId, 'X-Barq-Token': token });
+
+/* خدمة الخلفية في MV3 تُعاد من الصفر بعد الخمول: كل مستمع ينتظر تحميل الإعدادات أولاً */
+const ready = (async () => {
+  const v = await B.storage.local.get(null);
+  for (const k of Object.keys(DEFAULTS)) if (v[k] !== undefined) cfg[k] = v[k];
+  clientId = v.clientId || '';
+  token = v.token || '';
+  pairKey = v.pairKey || '';
+  if (!/^[a-f0-9]{32,64}$/.test(clientId) || !/^[a-f0-9]{32,64}$/.test(pairKey)) {
+    clientId = randHex(16); pairKey = randHex(32); token = '';
+    await B.storage.local.set({ clientId, pairKey, token: '' });
+  }
+})().catch((e) => console.warn('Barq: settings load failed', e));
+ready.then(() => refreshApp());
+B.storage.onChanged.addListener((ch) => {
+  let changed = false;
+  for (const k in ch) if (k in DEFAULTS) { cfg[k] = ch[k].newValue ?? DEFAULTS[k]; changed = true; }
+  if (changed) refreshApp();
+});
 
 /* اكتشاف البرنامج تلقائياً: المنفذ المحفوظ أولاً ثم 46321..46330
    (إذا كانت نسخة قديمة تحجز المنفذ الافتراضي، يعمل برق على المنفذ التالي) */
@@ -38,9 +72,34 @@ async function ping(port) {
   const ctl = new AbortController();
   const tm = setTimeout(() => ctl.abort(), 1200);
   try {
-    const r = await fetch(`http://127.0.0.1:${port}/ping?b=${browserName()}&v=${EXT_VERSION}`, { cache: 'no-store', signal: ctl.signal, targetAddressSpace: 'loopback' });
-    return await r.json();
+    const nonce = randHex(16);
+    const r = await fetch(`http://127.0.0.1:${port}/ping?b=${browserName()}&v=${EXT_VERSION}&c=${clientId}&n=${nonce}`, { cache: 'no-store', signal: ctl.signal, targetAddressSpace: 'loopback' });
+    const j = await r.json();
+    // هل هذا برق نفسه؟ يثبت ذلك بتوقيع الـ nonce بالرمز الذي لا يعرفه غيره
+    j.trusted = !!(token && j.proof && j.proof === await hmacHex(token, nonce));
+    return j;
   } catch { return null; } finally { clearTimeout(tm); }
+}
+/** طلب الاقتران: يظهر للمستخدم سؤال داخل برنامج برق، وننتظر إجابته */
+async function pair(port) {
+  pairState = 'waiting';
+  B.action.setBadgeText({ text: '?' }); B.action.setBadgeBackgroundColor({ color: '#d97706' });
+  // البرنامج يرد فوراً: 202 ما دام السؤال معروضاً، 200 مع الرمز بعد الموافقة، 403 عند الرفض.
+  // نسأل كل ثانيتين؛ وإن نامت الخدمة في الأثناء فأول فحص بعد استيقاظها يستلم الرمز بنفس pairKey.
+  try {
+    for (let i = 0; i < 90; i++) {
+      const r = await fetch(`http://127.0.0.1:${port}/pair`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, targetAddressSpace: 'loopback',
+        body: JSON.stringify({ clientId, pairKey, browser: browserName(), ext: EXT_VERSION }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 200 && j.token) { token = j.token; await B.storage.local.set({ token }); pairState = ''; return true; }
+      if (r.status !== 202) { lastError = 'pair HTTP ' + r.status; pairState = 'denied'; return false; }
+      await new Promise((res) => setTimeout(res, 2000));
+    }
+    pairState = 'denied';
+    return false;
+  } catch (e) { lastError = 'pair ' + (e && e.message); pairState = 'denied'; return false; }
 }
 async function discover() {
   oldApp = null;
@@ -55,15 +114,42 @@ async function discover() {
   return false;
 }
 
-async function refreshApp() {
+let pairing = null;        // طلب اقتران جارٍ (Promise<boolean>)
+/** ينتظر انتهاء طلب الاقتران الجاري (إن وُجد) ثم يعيد الفحص */
+async function settlePairing() { if (pairing) { await pairing; await refreshApp(); } }
+let refreshing = null;
+function refreshApp(opts) {
+  // طلب واحد في كل مرة (المنبّه والمؤقت والنافذة المنبثقة قد تستدعيها معاً)
+  if (!refreshing) refreshing = doRefresh(opts || {}).finally(() => { refreshing = null; });
+  return refreshing;
+}
+async function doRefresh({ forcePair = false } = {}) {
+  await ready;
   try {
     const j = activePort ? await ping(activePort) : null;
     if (j && /^barq/i.test(j.app || '')) appInfo = j;           // نحدّث إصدار البرنامج في كل فحص
     else if (!(await discover())) throw new Error('not found');
-    const r = await fetch(base() + '/config', { cache: 'no-store', targetAddressSpace: 'loopback' });
+    trusted = !!appInfo.trusted;
+    if (!trusted) {
+      if (!appInfo.auth) { pairState = 'oldapp'; throw new Error('app without pairing support'); }
+      // غير مقترن (أو الرمز لم يعد صالحاً): نطلب الموافقة مرة، ثم لا نكرر إلا بعد 5 دقائق أو بطلب من المستخدم
+      // الطلب يجري في الخلفية (ينتظر إجابة المستخدم) حتى لا تتجمد النافذة المنبثقة؛ عند الموافقة نعيد الفحص
+      // إن كان لدينا رمز سابق والبرنامج لا يثبت معرفته به فقد يكون برنامجاً آخر يحجز المنفذ:
+      // لا نقترن تلقائياً أبداً في هذه الحالة — فقط بطلب صريح من المستخدم في النافذة المنبثقة.
+      if (token && !forcePair) pairState = 'mismatch';
+      if (!pairing && (forcePair || (!token && Date.now() - lastPairTry > 300000))) {
+        lastPairTry = Date.now();
+        const port = activePort;
+        pairing = pair(port).then((ok) => { pairing = null; if (ok) refreshApp(); return ok; }, () => { pairing = null; return false; });
+      }
+      throw new Error('not paired');
+    }
+    pairState = '';
+    const r = await fetch(base() + '/config', { cache: 'no-store', headers: authHeaders(), targetAddressSpace: 'loopback' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
     appConfig = await r.json();
-    appAlive = true;
-  } catch { appAlive = false; }
+    appAlive = true; lastError = '';
+  } catch (e) { appAlive = false; lastError = String((e && e.message) || e); }
   // تحديث ذاتي: البرنامج يضع ملفات الإضافة الجديدة في نفس المجلد عند كل تحديث،
   // فإذا اختلف الإصدار نعيد تحميل الإضافة من القرص مرة واحدة لكل إصدار.
   if (appAlive && appInfo && appInfo.version && appInfo.version !== EXT_VERSION) {
@@ -75,11 +161,12 @@ async function refreshApp() {
     }
   }
   const mismatch = appAlive && appInfo && appInfo.version && appInfo.version.split('.').slice(0, 2).join('.') !== EXT_VERSION.split('.').slice(0, 2).join('.');
-  B.action.setBadgeText({ text: !appAlive ? '!' : mismatch ? '↻' : '' });
-  B.action.setBadgeBackgroundColor({ color: mismatch ? '#d97706' : '#dc2626' });
+  const needPair = !appAlive && appInfo && !trusted;
+  B.action.setBadgeText({ text: needPair ? '?' : !appAlive ? '!' : mismatch ? '↻' : '' });
+  B.action.setBadgeBackgroundColor({ color: mismatch || needPair ? '#d97706' : '#dc2626' });
   return appAlive;
 }
-setInterval(refreshApp, 30000);
+setInterval(() => refreshApp(), 30000);
 // خدمة الخلفية في MV3 تنام بعد 30 ثانية: منبّه يوقظها للتحقق من البرنامج وتحديث الإضافة
 B.alarms.create('barq-check', { periodInMinutes: 0.5 });
 B.alarms.onAlarm.addListener((a) => { if (a.name === 'barq-check') refreshApp(); });
@@ -99,11 +186,16 @@ async function sendToApp(items, batch = false) {
   for (const it of items) {
     full.push({ ...it, cookies: it.cookies ?? await cookiesFor(it.url), userAgent: navigator.userAgent });
   }
-  if (!activePort) await refreshApp();
-  const r = await fetch(base() + (batch ? '/batch' : '/download'), {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, targetAddressSpace: 'loopback',
+  await ready;
+  if (!activePort || !trusted) { await refreshApp({ forcePair: !token }); if (!trusted) await settlePairing(); }
+  // الكوكيز وترويسات الدخول لا تُرسل إلا لبرنامج أثبت هويته
+  if (!activePort || !trusted) throw new Error(pairState === 'waiting' || pairState === 'denied' ? 'not paired' : 'not connected');
+  const post = () => fetch(base() + (batch ? '/batch' : '/download'), {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, targetAddressSpace: 'loopback',
     body: JSON.stringify(batch ? { items: full } : full[0]),
   });
+  const r = await post();
+  if (r.status === 401) { trusted = false; pairState = 'mismatch'; throw new Error('not paired'); }   // الرمز أُلغي من البرنامج
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
 }
@@ -123,6 +215,7 @@ function wanted(url, filename, mime) {
 
 /* ---------- 1) intercept browser downloads ---------- */
 B.downloads.onCreated.addListener(async (item) => {
+  await ready;                     // إعداد «اعتراض التنزيلات» قد لا يكون حُمّل بعد استيقاظ الخدمة
   if (!cfg.intercept || item.state !== 'in_progress') return;
   const url = item.finalUrl || item.url;
   if (!/^https?:/i.test(url) || skip.has(url)) { skip.delete(url); return; }
@@ -162,9 +255,17 @@ B.contextMenus.onClicked.addListener(async (info, tab) => {
       if (links && links.length) await sendToApp(links.map(u => ({ url: u, referer: tab.url })), true);
     }
   } catch (e) {
-    notifyTab(tab?.id, 'تعذر الاتصال ببرنامج برق — تأكد أنه يعمل');
+    notifyTab(tab?.id, connectError(e));
   }
 });
+function connectError(e) {
+  if (pairState === 'mismatch') return 'برنامج برق لم يتعرّف على هذه الإضافة — افتح نافذة الإضافة واضغط «طلب الاتصال»';
+  if (e && e.message === 'not paired') return 'وافق على طلب الاتصال في نافذة برنامج برق ثم أعد المحاولة';
+  if (pairState === 'oldapp') return 'نسخة برنامج برق قديمة — حدّث البرنامج';
+  // السبب التقني بين قوسين يساعد على التشخيص (مثلاً: not found = البرنامج غير مشغّل)
+  const why = String((e && e.message) || lastError || '').slice(0, 60);
+  return 'تعذر الاتصال ببرنامج برق — تأكد أنه يعمل' + (why ? ` (${why})` : '');
+}
 function notifyTab(tabId, msg) { if (tabId != null) B.tabs.sendMessage(tabId, { type: 'toast', msg }, { frameId: 0 }).catch(() => {}); }
 
 /* ---------- 3) media sniffing ---------- */
@@ -239,22 +340,29 @@ B.webRequest.onHeadersReceived.addListener((d) => {
 B.tabs.onUpdated.addListener((tabId, ch) => { if (ch.url) { media.delete(tabId); B.action.setBadgeText({ tabId, text: '' }).catch?.(() => {}); B.tabs.sendMessage(tabId, { type: 'media', items: [] }).catch(() => {}); } });
 B.tabs.onRemoved.addListener((tabId) => media.delete(tabId));
 
+function statusNow() {
+  return { alive: appAlive, enabled: appConfig.enabled, cfg, port: activePort, appVersion: appInfo?.version || '', extVersion: EXT_VERSION, oldApp,
+    found: !!appInfo, paired: trusted, pairState, lastError };
+}
+
 /* ---------- messages from content script / popup ---------- */
 B.runtime.onMessage.addListener((msg, sender, reply) => {
   (async () => {
+    await ready;
     const tabId = msg.tabId ?? sender.tab?.id;
     switch (msg.type) {
       case 'getMedia': maybeRefresh(); return { items: media.get(tabId) || [], panel: cfg.panel, alive: appAlive };
       case 'pageMedia': for (const it of msg.items || []) { const c = classify(it.url, it.mime || '', -1) || (it.kind ? { kind: it.kind, label: it.label } : null); if (c) addMedia(tabId, { url: it.url, mime: it.mime || '', size: -1, ...c, label: c.label }); } return { ok: true };
       case 'download':
         try { await sendToApp([{ url: msg.url, referer: msg.referer || sender.tab?.url || '', fileName: msg.fileName || '', kind: msg.kind || '', headers: reqHeaders.get(msg.url) || undefined }]); return { ok: true }; }
-        catch (e) { return { ok: false, error: 'تعذر الاتصال ببرنامج برق — تأكد أنه يعمل' }; }
+        catch (e) { return { ok: false, error: connectError(e) }; }
       case 'batch':
         try { await sendToApp(msg.urls.map(u => ({ url: u, referer: msg.referer || '' })), true); return { ok: true }; }
-        catch (e) { return { ok: false, error: e.message }; }
-      case 'status': await refreshApp(); return { alive: appAlive, enabled: appConfig.enabled, cfg, port: activePort, appVersion: appInfo?.version || '', extVersion: B.runtime.getManifest().version, oldApp };
+        catch (e) { return { ok: false, error: connectError(e) }; }
+      case 'status': await refreshApp(); return statusNow();
+      case 'pair': await refreshApp({ forcePair: true }); return statusNow();
       default: return null;
     }
-  })().then(reply);
+  })().then(reply, () => reply(null));
   return true;
 });

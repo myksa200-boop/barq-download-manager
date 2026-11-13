@@ -1,10 +1,15 @@
 'use strict';
 /**
- * مخزن محلي احتياطي بواجهة متوافقة مع الجزء المستخدم من Realm.
- * يُستخدم تلقائياً فقط إذا تعذر تحميل مكتبة Realm الأصلية (realm.node)،
- * حتى لا يتوقف البرنامج عن العمل. الكتابة ذرّية (ملف مؤقت ثم إعادة تسمية) مع نسخة احتياطية.
+ * المخزن المحلي للبرنامج: ملف JSON واحد في بيانات المستخدم.
+ *  - الكتابة مؤجّلة: التغييرات تُجمَّع وتُكتب مرة واحدة بعد FLUSH_MS (لا كتابة للقرص مع كل تحديث تقدّم).
+ *  - الكتابة ذرّية (ملف مؤقت ثم إعادة تسمية) مع نسخة احتياطية .bak تُحدَّث كل BACKUP_MS على الأكثر.
+ *  - عند الإغلاق أو خروج العملية تُكتب أي تغييرات معلّقة فوراً.
+ *  - إذا تعذّرت قراءة الملف تُستخدم النسخة الاحتياطية، ويُحفظ الملف التالف جانباً بدل الكتابة فوقه.
  */
 const fs = require('fs');
+
+const FLUSH_MS = 400;
+const BACKUP_MS = 60000;
 
 class Results extends Array {
   sorted(field, reverse) {
@@ -18,20 +23,31 @@ class Results extends Array {
   }
 }
 
-class JsonRealm {
+class JsonStore {
   constructor({ path, schema }) {
     this.file = path + '.json';
     this.schemas = Object.fromEntries(schema.map(s => [s.name, s]));
     this.isClosed = false;
     this.data = {};
+    this._dirty = false;
+    this._timer = null;
+    this._lastBackup = 0;
     for (const s of schema) if (!s.embedded) this.data[s.name] = [];
     const load = (f) => {
       const j = JSON.parse(fs.readFileSync(f, 'utf8'));
-      for (const k of Object.keys(j)) if (this.data[k]) this.data[k] = j[k].map(o => this._revive(k, o));
+      if (!j || typeof j !== 'object') throw new Error('bad store');
+      for (const k of Object.keys(j)) if (this.data[k] && Array.isArray(j[k])) this.data[k] = j[k].map(o => this._revive(k, o));
     };
     try { if (fs.existsSync(this.file)) load(this.file); } catch {
-      try { if (fs.existsSync(this.file + '.bak')) load(this.file + '.bak'); } catch { /* start empty */ }
+      // الملف الرئيسي تالف: نحتفظ به للفحص ثم نحاول النسخة الاحتياطية
+      try { fs.copyFileSync(this.file, `${this.file}.corrupt-${Date.now()}`); } catch { /* ignore */ }
+      for (const s of schema) if (!s.embedded) this.data[s.name] = [];
+      try { if (fs.existsSync(this.file + '.bak')) load(this.file + '.bak'); } catch {
+        for (const s of schema) if (!s.embedded) this.data[s.name] = [];   // نبدأ فارغين
+      }
     }
+    this._onExit = () => { try { this.flush(); } catch { /* ignore */ } };
+    process.on('exit', this._onExit);
   }
   _type(p) { return typeof p === 'string' ? p : p.type; }
   _revive(name, o) {
@@ -51,15 +67,27 @@ class JsonRealm {
     return out;
   }
   write(fn) {
+    if (this.isClosed) throw new Error('jsonstore: store is closed');
     this._tx = true;
     try { fn(); } finally { this._tx = false; }
-    this._flush();
+    this._dirty = true;
+    if (!this._timer) {
+      this._timer = setTimeout(() => { this._timer = null; try { this.flush(); } catch (e) { console.error('[store]', e.message); } }, FLUSH_MS);
+      this._timer.unref?.();
+    }
   }
-  _flush() {
+  /** يكتب التغييرات المعلّقة إلى القرص الآن */
+  flush() {
+    if (this._timer) { clearTimeout(this._timer); this._timer = null; }
+    if (!this._dirty) return;
     const tmp = this.file + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(this.data));
-    try { if (fs.existsSync(this.file)) fs.copyFileSync(this.file, this.file + '.bak'); } catch { /* ignore */ }
+    const now = Date.now();
+    if (now - this._lastBackup > BACKUP_MS) {
+      try { if (fs.existsSync(this.file)) { fs.copyFileSync(this.file, this.file + '.bak'); this._lastBackup = now; } } catch { /* ignore */ }
+    }
     fs.renameSync(tmp, this.file);
+    this._dirty = false;
   }
   _check() { if (!this._tx) throw new Error('jsonstore: write outside transaction'); }
   objects(name) { return Results.from(this.data[name]); }
@@ -84,8 +112,13 @@ class JsonRealm {
     this._check();
     for (const k of Object.keys(this.data)) { const i = this.data[k].indexOf(o); if (i >= 0) this.data[k].splice(i, 1); }
   }
-  close() { this.isClosed = true; }
+  close() {
+    if (this.isClosed) return;
+    this.flush();
+    process.removeListener('exit', this._onExit);
+    this.isClosed = true;
+  }
 }
-JsonRealm.UpdateMode = { Never: 'never', Modified: 'modified', All: 'all' };
+JsonStore.UpdateMode = { Never: 'never', Modified: 'modified', All: 'all' };
 
-module.exports = JsonRealm;
+module.exports = JsonStore;

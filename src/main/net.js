@@ -40,12 +40,21 @@ const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 function request(url, { method = 'GET', headers = {}, timeout = 30000, maxRedirects = 10, signal } = {}) {
   return new Promise((resolve, reject) => {
     let redirects = 0;
+    let firstHost = '';
+    const site = (hn) => hn.split('.').slice(-2).join('.');
     const go = (u) => {
       let parsed;
       try { parsed = new URL(u); } catch (e) { return reject(new Error('Invalid URL: ' + u)); }
       const mod = parsed.protocol === 'https:' ? https : parsed.protocol === 'http:' ? http : null;
       if (!mod) return reject(new Error('Unsupported protocol: ' + parsed.protocol));
       const h = { 'User-Agent': DEFAULT_UA, Accept: '*/*', 'Accept-Encoding': 'identity', ...clean(headers) };
+      // عند التحويل إلى خادم آخر لا نرسل بيانات الدخول إليه (كما تفعل المتصفحات)
+      if (!firstHost) firstHost = parsed.hostname;
+      else if (parsed.hostname !== firstHost) {
+        for (const k of Object.keys(h)) {
+          if (/^authorization$/i.test(k) || (/^cookie$/i.test(k) && site(parsed.hostname) !== site(firstHost))) delete h[k];
+        }
+      }
       const req = mod.request(parsed, { method, headers: h, agent: agents[parsed.protocol] });
       let done = false;
       const fail = (e) => { if (!done) { done = true; req.destroy(); reject(e); } };

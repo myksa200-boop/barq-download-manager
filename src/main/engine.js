@@ -7,7 +7,7 @@
  *    (لا حاجة لدمج أجزاء في النهاية).
  * 3) حين ينهي اتصالٌ قطعته، تُقسم أكبر قطعة متبقية لدى أبطأ اتصال إلى نصفين
  *    ويأخذ الاتصال الحر النصف الثاني عبر Range: bytes=x-y جديد.
- * 4) مواضع البايتات (segments) تُحفظ في Realm فيستأنف التنزيل بعد الإيقاف أو إغلاق البرنامج.
+ * 4) مواضع البايتات (segments) تُحفظ في قاعدة البيانات فيستأنف التنزيل بعد الإيقاف أو إغلاق البرنامج.
  */
 const fs = require('fs');
 const fsp = fs.promises;
@@ -69,6 +69,19 @@ async function checkSpace(dir, needed) {
   if (free < needed + 16 * 1024 * 1024) {
     throw Object.assign(new Error(`ENOSPC: need ${needed}, free ${free}`), { code: 'ENOSPC' });
   }
+}
+
+/**
+ * ويندوز/NTFS: الملف العادي يُصفَّر فعلياً حتى موضع أول كتابة بعيدة، فكتابة قطعة عند 60GB
+ * كانت تجمّد القرص وكل الاتصالات لدقائق. الملف المتفرّق (sparse) يلغي ذلك فتصبح الكتابة فورية.
+ */
+function markSparse(file) {
+  if (process.platform !== 'win32') return Promise.resolve();
+  return new Promise((resolve) => {
+    try {
+      require('child_process').execFile('fsutil', ['sparse', 'setflag', file], { windowsHide: true, timeout: 10000 }, () => resolve());
+    } catch { resolve(); }
+  });
 }
 
 function buildHeaders(rec, auth) {
@@ -209,7 +222,7 @@ class HttpTask extends BaseTask {
         if (reuse) { const st = await fsp.stat(this.partPath); if (st.size !== this.size) reuse = false; }
         if (!reuse) this.segments = this._initialSegments();
         this.fh = await fsp.open(this.partPath, reuse ? 'r+' : 'w');
-        if (!reuse) await this.fh.truncate(this.size);
+        if (!reuse) { await markSparse(this.partPath); await this.fh.truncate(this.size); }
       } else {
         this.segments = [];
         this.fh = await fsp.open(this.partPath, 'w');
@@ -455,6 +468,16 @@ class HttpTask extends BaseTask {
       return;
     }
     if (this.segments.every(s => s.pos > s.end)) { if (!this._alive().length) this._finish(); return; }
+    // اتصال استنفد محاولاته: لا نفتح بديلاً له (كان ذلك يعيد المحاولة بلا نهاية).
+    // إن بقيت اتصالات أخرى نكمل بها بعدد أقل وتُلتقط قطعته لاحقاً، وإلا يفشل التنزيل.
+    if (w.failed) {
+      const others = this._alive().length;
+      if (!others) { this._failAll(this.lastError || new Error('Download failed')); return; }
+      this.cap = Math.max(1, Math.min(this.cap, others));
+      this.saturatedAt = Date.now();
+      this.stats.serverLimited++;
+      return;
+    }
     this._fill();
     if (!this._alive().length) this._failAll(this.lastError || new Error('Download failed'));
   }

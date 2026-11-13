@@ -12,6 +12,7 @@
   async function init() {
     const r = await api.call('get', id);
     rec = r.rec; prog = r.progress; settings = r.settings;
+    details = !!settings.progressDetails;   // التفاصيل مخفية افتراضياً؛ يُحفظ اختيار المستخدم
     if (!rec) return api.closeWindow();
     UI.applyTheme(settings.theme); I18N.set(settings.lang);
     render();
@@ -46,10 +47,10 @@
         h('span', {}, t('p_resume')), h('b', { id: 'rs' })),
       h('div', { class: 'pbar', id: 'pbar' }, h('div')),
       h('div', { class: 'row', style: { justifyContent: 'flex-end', margin: '10px 0 4px' } },
-        h('button', { class: 'btn', id: 'btnDetails', onclick: toggleDetails }, t('hideDetails')),
+        h('button', { class: 'btn', id: 'btnDetails', onclick: toggleDetails }, t(details ? 'hideDetails' : 'showDetails')),
         h('button', { class: 'btn primary', id: 'btnPause', onclick: pauseResume }, t('pause')),
         h('button', { class: 'btn', onclick: cancel }, t('cancel'))),
-      h('div', { id: 'details' },
+      h('div', { id: 'details', class: details ? '' : 'hidden' },
         h('div', { style: { margin: '8px 0 5px', fontSize: '12px' } }, t('p_conns')),
         h('canvas', { id: 'segcanvas' }),
         h('div', { class: 'conn-table' }, h('table', { class: 'mini' }, h('thead', {}, h('tr', {}, h('th', { style: { width: '48px' } }, t('p_n')), h('th', { style: { width: '120px' } }, t('p_downloaded')), h('th', {}, t('p_info')))), h('tbody', { id: 'conns' })))));
@@ -145,6 +146,7 @@
     $('#details').classList.toggle('hidden', !details);
     $('#btnDetails').textContent = details ? t('hideDetails') : t('showDetails');
     fit();
+    api.call('saveSettings', { progressDetails: details }).catch(() => {});   // يُتذكَّر للنوافذ القادمة
     if (details) update();
   }
   // ارتفاع النافذة = ارتفاع المحتوى الفعلي فقط (يصغر عند إخفاء التفاصيل)

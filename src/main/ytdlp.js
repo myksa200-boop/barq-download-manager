@@ -21,7 +21,11 @@ const FFMPEG_URL = `https://github.com/eugeneware/ffmpeg-static/releases/downloa
 
 /** مواقع معروفة يعالجها yt-dlp (الروابط الأخرى تُجرَّب أيضاً عبر المستخرج العام) */
 const YTDLP_HOSTS = /(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com|x\.com|twitter\.com|instagram\.com|tiktok\.com|facebook\.com|fb\.watch|vimeo\.com|dailymotion\.com|dai\.ly|twitch\.tv|reddit\.com|redd\.it|soundcloud\.com|bilibili\.com|streamable\.com|ok\.ru|vk\.com|vkvideo\.ru|rumble\.com|kick\.com|threads\.net|pinterest\.com|linkedin\.com|9gag\.com|imgur\.com|bandcamp\.com|mixcloud\.com|ted\.com|aparat\.com|snapchat\.com|bitchute\.com|odysee\.com|nicovideo\.jp|weibo\.com|douyin\.com|likee\.video|tumblr\.com|vimeo\.com)$/i;
-function isYtdlpUrl(url) { try { return YTDLP_HOSTS.test(new URL(url).hostname); } catch { return false; } }
+/** رابط ملف مباشر (صورة/أرشيف/فيديو جاهز) على أحد هذه المواقع يُنزَّل كملف عادي لا عبر yt-dlp */
+const DIRECT_FILE = /\.(jpe?g|png|gif|webp|bmp|svg|zip|rar|7z|gz|pdf|exe|msi|apk|iso|mp3|m4a|flac|wav|mp4|m4v|webm|mkv|mov)$/i;
+function isYtdlpUrl(url) {
+  try { const u = new URL(url); return YTDLP_HOSTS.test(u.hostname) && !DIRECT_FILE.test(u.pathname); } catch { return false; }
+}
 
 /* ------------------------------------------------------------------ */
 function httpsGet(url, redirects = 0) {
@@ -189,12 +193,13 @@ function notAVideoPage(url) {
 
 /** معلومات الفيديو أو قائمة التشغيل (yt-dlp -J) */
 async function ytdlpInfo(components, rec, { timeout = 120000 } = {}) {
-  const bin = await components.ensureYtdlp();
-  const cookieFile = await writeCookies(rec, path.join(components.binDir, '..', 'tmp'));
   let u;
   try { u = new URL(rec.url); } catch { throw new Error('رابط غير صالح'); }
   const nv = notAVideoPage(rec.url);
   if (nv) throw new Error(nv);
+  const bin = await components.ensureYtdlp();
+  // اسم فريد لكل فحص حتى لا يحذف فحصٌ ملف كوكيز فحصٍ آخر يعمل معه
+  const cookieFile = await writeCookies({ ...rec, _id: `${rec._id || 'x'}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` }, path.join(components.binDir, '..', 'tmp'));
   const isList = u.searchParams.has('list') && !u.searchParams.has('v') || /\/playlist$/.test(u.pathname);
   const args = ['-J', ...(isList ? ['--flat-playlist'] : ['--no-playlist']), ...commonArgs(rec)];
   if (cookieFile) args.push('--cookies', cookieFile);
@@ -331,6 +336,7 @@ function makeYtdlpTask(BaseTask, { friendlyError }) {
         }
       };
       let buf = '';
+      this.proc.stdout.setEncoding('utf8'); this.proc.stderr.setEncoding('utf8');
       this.proc.stdout.on('data', (c) => { buf += c; let i; while ((i = buf.search(/\r?\n/)) >= 0) { onLine(buf.slice(0, i)); buf = buf.slice(i + 1).replace(/^\n/, ''); } });
       this.proc.stderr.on('data', (c) => { stderr = (stderr + c).slice(-8000); });
       this.proc.on('error', (e) => { stderr += '\nERROR: ' + e.message; });

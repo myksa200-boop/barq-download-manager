@@ -5,15 +5,27 @@ const fmt = (b) => { if (!(b > 0)) return ''; const u = ['KB', 'MB', 'GB']; let 
 const TYPE = { hls: 'بث', dash: 'بث', http: 'فيديو', audio: 'صوت' };
 (async () => {
   const [tab] = await B.tabs.query({ active: true, currentWindow: true });
-  const s = await B.runtime.sendMessage({ type: 'status' });
-  $('stt').textContent = s.alive ? 'متصل' : 'البرنامج مغلق';
+  const s = (await B.runtime.sendMessage({ type: 'status' }).catch(() => null))
+    || { alive: false, cfg: { intercept: true, panel: true, port: 46321 }, extVersion: B.runtime.getManifest().version };
+  const needPair = !s.alive && s.found && !s.paired && s.pairState !== 'oldapp';
+  $('stt').textContent = s.alive ? 'متصل' : needPair ? 'بانتظار الموافقة' : 'البرنامج مغلق';
   $('st').classList.toggle('ok', s.alive);
   $('ver').textContent = s.extVersion;
-  if (!s.alive) $('hint').textContent = 'شغّل برنامج برق من قائمة ابدأ ثم أعد فتح هذه النافذة.';
+  if (s.pairState === 'oldapp') $('hint').textContent = 'نسخة برنامج برق قديمة ولا تدعم الاتصال الآمن. حدّث البرنامج.';
+  else if (needPair) {
+    $('hint').textContent = s.pairState === 'mismatch'
+      ? 'البرنامج الذي يعمل الآن لم يتعرّف على هذه الإضافة (أُعيد تثبيت برق أو مُسحت بياناته؟). إن كان برق نفسه هو المفتوح فاضغط الزر أدناه ثم «السماح» في نافذته.'
+      : 'ظهر في برنامج برق سؤال «السماح للإضافة بالاتصال». اضغط «السماح» هناك. إن لم يظهر السؤال اضغط الزر أدناه.';
+    const pb = document.createElement('button');
+    pb.className = 'primary'; pb.style.cssText = 'margin-top:8px'; pb.textContent = 'طلب الاتصال ببرنامج برق';
+    pb.onclick = async () => { pb.disabled = true; await B.runtime.sendMessage({ type: 'pair' }).catch(() => null); $('hint').textContent = 'أُرسل الطلب — وافق عليه في نافذة برنامج برق ثم أعد فتح هذه النافذة.'; };
+    $('hint').after(pb);
+  } else if (!s.alive) $('hint').textContent = 'شغّل برنامج برق من قائمة ابدأ ثم أعد فتح هذه النافذة.' + (s.lastError ? ` (${s.lastError})` : '');
   $('intercept').checked = s.cfg.intercept; $('panel').checked = s.cfg.panel; $('port').value = s.port || s.cfg.port;
   if (s.alive && s.port && s.port !== s.cfg.port) $('auto').textContent = 'تلقائي';
-  const warn = (html, err) => { $('warn').innerHTML = html; $('warn').classList.remove('hidden'); $('warn').classList.toggle('err', !!err); };
-  if (s.oldApp) warn(`النسخة القديمة <b>Nazzil</b> تعمل على المنفذ ${s.oldApp.port}. أغلقها (زر يمين على أيقونتها بجانب الساعة ← خروج) وأزل تثبيتها.`, !s.alive);
+  // النصوص القادمة من البرنامج تُدرج كنص لا كـ HTML
+  const warn = (text, err) => { $('warn').textContent = text; $('warn').classList.remove('hidden'); $('warn').classList.toggle('err', !!err); };
+  if (s.oldApp) warn(`النسخة القديمة Nazzil تعمل على المنفذ ${s.oldApp.port}. أغلقها (زر يمين على أيقونتها بجانب الساعة ← خروج) وأزل تثبيتها.`, !s.alive);
   else if (s.alive && s.appVersion && s.appVersion.split('.').slice(0, 2).join('.') !== s.extVersion.split('.').slice(0, 2).join('.')) {
     warn(`إصدار الإضافة (${s.extVersion}) لا يطابق البرنامج (${s.appVersion}). من البرنامج: مساعدة ← ربط المتصفح، وحمّلها من المجلد الذي يفتحه.`);
   }

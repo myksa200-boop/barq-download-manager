@@ -1,6 +1,6 @@
 'use strict';
 /**
- * مدير التنزيلات: يربط المحرك بقاعدة Realm، ويدير قوائم الانتظار والجدولة والتصنيفات.
+ * مدير التنزيلات: يربط المحرك بقاعدة البيانات، ويدير قوائم الانتظار والجدولة والتصنيفات.
  * لا يعتمد على Electron — يمكن تشغيله واختباره في Node مباشرة.
  */
 const fs = require('fs');
@@ -52,7 +52,7 @@ class Manager extends EventEmitter {
       categories: this.db.categories.all(),
       queues: this.db.queues.all(),
       settings: this.settings,
-      logins: this.db.logins.all(),
+      logins: this.db.logins.list(),
       runningQueues: [...this.runningQueues],
       progress: Object.fromEntries(this.progress),
       ffmpeg: this.ffmpeg,
@@ -245,7 +245,7 @@ class Manager extends EventEmitter {
         const q = this.db.queues.get(rec2.queueId);
         const c = (this.retryCounts.get(id) || 0) + 1;
         this.retryCounts.set(id, c);
-        if (q && c <= q.retryFailed) this.db.downloads.update(id, { status: 'queued' });
+        if (q && c <= q.retryFailed) this._emitUpdate(this.db.downloads.update(id, { status: 'queued' }));
       }
       this._pump();
     });
@@ -286,8 +286,11 @@ class Manager extends EventEmitter {
     this.emit('removed', ids);
   }
 
-  async removeCompleted() {
-    const ids = this.db.downloads.all().filter(d => d.status === 'complete').map(d => d._id);
+  async removeCompleted(deleteFiles = false) {
+    const done = this.db.downloads.all().filter(d => d.status === 'complete');
+    const ids = done.map(d => d._id);
+    if (deleteFiles) for (const d of done) await fsp.rm(path.join(d.saveDir, d.fileName), { force: true }).catch(() => {});
+    for (const id of ids) this.progress.delete(id);
     if (ids.length) { this.db.downloads.remove(ids); this.emit('removed', ids); }
     return ids.length;
   }

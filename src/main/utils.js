@@ -26,6 +26,7 @@ const DEFAULT_SETTINGS = {
   silentBridge: false,      // true = add from browser without the info dialog
   captureExts: DEFAULT_CAPTURE_EXTS,
   showProgressOnStart: true,
+  progressDetails: false,   // قسم «التفاصيل» (الاتصالات) في نافذة التقدم: مخفي حتى يطلبه المستخدم
   showCompleteDialog: true,
   sound: true,
   duplicate: 'rename',      // rename | overwrite | ask

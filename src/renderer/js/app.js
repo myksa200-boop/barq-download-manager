@@ -199,7 +199,7 @@
   $('#gridwrap').addEventListener('contextmenu', (e) => {
     if (e.target.closest('tr')) return;
     e.preventDefault();
-    showMenu([{ label: t('addNew'), action: () => DLG.addUrl() }, { label: t('addBatch'), action: () => DLG.batch() }], e.clientX, e.clientY, 'ctxmenu');
+    showMenu([{ label: t('addNew'), action: () => DLG.addUrl() }, { label: t('addBatch'), action: () => DLG.batch() }, '-', { label: t('selectAll'), key: 'Ctrl+A', disabled: !rowEls.size, action: () => cmd('selectAll') }, { label: t('deleteCompleted'), action: () => cmd('deleteCompleted') }], e.clientX, e.clientY, 'ctxmenu');
   });
 
   function sel() { return APP.selected(); }
@@ -229,6 +229,7 @@
       one && one.status === 'complete' && { label: t('verify'), action: () => DLG.verify(one) },
       { label: t('exportList'), action: () => api.call('exportList', items.map(d => d._id)) },
       '-',
+      { label: t('selectAll'), key: 'Ctrl+A', action: () => cmd('selectAll') },
       { label: t('remove'), key: 'Del', action: () => cmd('delete') },
       one && { label: t('properties'), action: () => DLG.properties(one) },
     ], x, y, 'ctxmenu');
@@ -338,7 +339,15 @@
           }
           return;
         }
-        case 'deleteCompleted': return api.call('removeCompleted');
+        case 'selectAll': setSel([...rowEls.keys()]); return;
+        case 'deleteCompleted': {
+          // لا يحتاج تحديداً: يعرض العدد ويسأل هل تُحذف الملفات من القرص أيضاً
+          const n = [...S.downloads.values()].filter(d => d.status === 'complete').length;
+          if (!n) { toast(t('noCompleted')); return; }
+          const box = h('label', { class: 'chk' }, h('input', { type: 'checkbox' }), t('deleteFiles'));
+          if (await UI.confirmBox(t('confirmDelCompleted', n), box)) await api.call('removeCompleted', box.querySelector('input').checked);
+          return;
+        }
         case 'options': return DLG.options();
         case 'scheduler': return DLG.scheduler(S.view.type === 'queue' ? S.view.id : 'main');
         case 'startQueue': return startQueue(S.view.type === 'queue' ? S.view.id : 'main');
@@ -371,6 +380,7 @@
         { label: t('stop'), disabled: !items.length, action: () => cmd('stop') },
         { label: t('redownload'), disabled: !one, action: () => api.call('redownload', one._id) },
         { label: t('remove'), key: 'Del', disabled: !items.length, action: () => cmd('delete') },
+        { label: t('selectAll'), key: 'Ctrl+A', action: () => cmd('selectAll') },
         '-',
         { label: t('open'), disabled: !one || one.status !== 'complete', action: () => api.call('open', one._id) },
         { label: t('openFolder'), disabled: !one, action: () => api.call('openFolder', one._id) },
@@ -425,7 +435,8 @@
   document.addEventListener('keydown', (e) => {
     if ($('.overlay')) return;
     const inField = /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName);
-    const k = e.key.toLowerCase();
+    // موضع المفتاح لا الحرف المكتوب: مع لوحة المفاتيح العربية Ctrl+A يصل كـ «ش» فلا يعمل الاختصار
+    const k = /^Key[A-Z]$/.test(e.code || '') ? e.code.slice(3).toLowerCase() : String(e.key || '').toLowerCase();
     if ((e.ctrlKey || e.metaKey) && k === 'n') { e.preventDefault(); DLG.addUrl(); }
     else if ((e.ctrlKey || e.metaKey) && k === 'b') { e.preventDefault(); DLG.batch(); }
     else if ((e.ctrlKey || e.metaKey) && k === 'q') { e.preventDefault(); api.call('quit'); }

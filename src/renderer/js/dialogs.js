@@ -510,7 +510,7 @@
       const list = d.list.length ? d.list : [{ id: 'chrome', name: 'Google Chrome', kind: 'chromium', missing: true }];
       for (const b of list) {
         const c = conn(b.id);
-        const status = c ? h('b', { style: { color: 'var(--ok)' } }, `✓ ${t('bs_connected')}${c.ext ? ' · v' + c.ext : ''}`) : h('span', { class: 'muted' }, t('bs_notConnected'));
+        const status = c ? h('b', { style: { color: c.paired ? 'var(--ok)' : 'var(--warn)' } }, `${c.paired ? '✓ ' + t('bs_connected') : t('bs_waiting')}${c.ext ? ' · v' + c.ext : ''}`) : h('span', { class: 'muted' }, t('bs_notConnected'));
         const btn = b.missing ? (c ? h('span') : h('span', { class: 'hint' }, t('bs_noBrowsers'))) : h('button', { class: 'btn sm' + (c ? '' : ' primary'), onclick: async () => {
           try { await api.call('openBrowserExt', b.id); toast(t('bs_opened', b.name)); } catch (e) { toast(e.message, true); }
         } }, c ? t('bs_reopen') : t('bs_install'));
@@ -521,7 +521,7 @@
       for (const c of d.connected) {
         if (!list.some(b => b.id === c.browser || (b.id === 'operagx' && c.browser === 'opera'))) {
           const NM = { chrome: 'Google Chrome', edge: 'Microsoft Edge', brave: 'Brave', opera: 'Opera', vivaldi: 'Vivaldi', yandex: 'Yandex', firefox: 'Firefox' };
-          table.append(h('div', { class: 'li', style: { cursor: 'default' } }, h('span', { style: { width: '12px', height: '12px', borderRadius: '50%', background: BR_ICON[c.browser] || '#64748b', flex: 'none' } }), h('b', { style: { minWidth: '120px' } }, NM[c.browser] || c.browser), h('b', { style: { color: 'var(--ok)', flex: 1 } }, `✓ ${t('bs_connected')} · v${c.ext}`)));
+          table.append(h('div', { class: 'li', style: { cursor: 'default' } }, h('span', { style: { width: '12px', height: '12px', borderRadius: '50%', background: BR_ICON[c.browser] || '#64748b', flex: 'none' } }), h('b', { style: { minWidth: '120px' } }, NM[c.browser] || c.browser), h('b', { style: { color: c.paired ? 'var(--ok)' : 'var(--warn)', flex: 1 } }, `${c.paired ? '✓ ' + t('bs_connected') : t('bs_waiting')}${c.ext ? ' · v' + c.ext : ''}`)));
         }
       }
     };
@@ -554,8 +554,7 @@
     const body = h('div', { class: 'row', style: { gap: '18px', alignItems: 'flex-start' } }, h('div', { html: icon('logo', '#2563eb', 64) }),
       h('div', {}, h('div', { style: { fontSize: '18px', fontWeight: 700 } }, 'Barq Download Manager'),
         h('div', { class: 'muted mono' }, `v${i.version} · Electron ${i.electron}`),
-        h('div', { style: { marginTop: '6px' } }, t('dbEngine') + ': ', h('b', { style: { color: i.engine === 'realm' ? 'var(--ok)' : 'var(--warn)' } }, i.engine === 'realm' ? 'Realm ' + i.realm : t('dbFallback'))),
-        i.engine !== 'realm' ? h('div', { class: 'hint' }, t('dbFallbackHint')) : '',
+        h('div', { style: { marginTop: '6px' } }, t('dbEngine') + ': ', h('b', { style: { color: 'var(--ok)' } }, t('dbFallback'))),
         h('p', {}, t('aboutText')), h('div', { class: 'hint mono' }, i.userData)));
     modal({ title: t('about'), body, width: 520, buttons: ['sp', { label: t('close'), cls: 'primary' }] });
   }

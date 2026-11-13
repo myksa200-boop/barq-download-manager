@@ -1,20 +1,10 @@
 'use strict';
 /**
- * طبقة قاعدة البيانات المحلية — Realm (realm@community)
- * كل الدوال متزامنة (Realm متزامن بطبيعته) وتُرجع كائنات JavaScript عادية
- * حتى يمكن إرسالها عبر IPC إلى الواجهة مباشرة.
+ * طبقة قاعدة البيانات المحلية — مخزن JSON (jsonstore.js)
+ * كل الدوال متزامنة وتُرجع كائنات JavaScript عادية حتى يمكن إرسالها عبر IPC إلى الواجهة مباشرة.
+ * الملف: <userData>/barq.realm.json (الاسم محفوظ كما هو كي تبقى بيانات الإصدارات السابقة).
  */
-let Realm;
-let ENGINE = 'realm';
-let ENGINE_ERROR = '';
-try {
-  Realm = require('realm');
-} catch (e) {
-  // ملف realm.node غير متوفر لهذا النظام: نستخدم المخزن الاحتياطي كي لا يتوقف البرنامج
-  Realm = require('./jsonstore');
-  ENGINE = 'json';
-  ENGINE_ERROR = e.message.split('\n')[0];
-}
+const Realm = require('./jsonstore');
 const { DEFAULT_CATEGORIES, DEFAULT_SETTINGS, uid } = require('./utils');
 
 const SegmentSchema = {
@@ -97,6 +87,23 @@ const DOWNLOAD_FIELDS = Object.keys(DownloadSchema.properties);
 
 let realm = null;
 
+/* تشفير الأسرار (كلمات مرور المواقع، رموز الإضافة): المُشفِّر يُحقن من main.js (safeStorage / DPAPI).
+   بدونه تبقى القيم كما هي — مثلاً عند التشغيل في Node للاختبار أو إن لم يتوفر التشفير في النظام. */
+const ENC = 'enc:v1:';
+let cipher = null;
+function setCipher(c) { cipher = c && typeof c.enc === 'function' && typeof c.dec === 'function' ? c : null; }
+function seal(s) {
+  s = String(s ?? '');
+  if (!s || !cipher || s.startsWith(ENC)) return s;
+  try { return ENC + cipher.enc(s); } catch { return s; }
+}
+function unseal(s) {
+  s = String(s ?? '');
+  if (!s.startsWith(ENC)) return s;
+  if (!cipher) return '';
+  try { return cipher.dec(s.slice(ENC.length)); } catch { return ''; }
+}
+
 function plainSeg(s) { return { start: Number(s.start), end: Number(s.end), pos: Number(s.pos) }; }
 
 function plainDownload(o) {
@@ -122,8 +129,11 @@ function open(dbPath) {
   // أي تنزيل كان نشطاً عند إغلاق البرنامج يصبح "متوقفاً" ليُستأنف لاحقاً
   realm.write(() => {
     for (const d of realm.objects('Download')) {
-      if (['downloading', 'connecting'].includes(d.status)) d.status = 'paused';
+      if (['downloading', 'connecting', 'merging'].includes(d.status)) d.status = 'paused';
+      else if (d.status === 'queued') d.status = 'stopped';   // القوائم لا تبقى شغّالة بعد إعادة التشغيل
     }
+    // ترحيل: كلمات المرور المحفوظة نصاً صريحاً في الإصدارات السابقة تُشفَّر الآن
+    if (cipher) for (const l of realm.objects('SiteLogin')) { if (l.pass && !String(l.pass).startsWith(ENC)) l.pass = seal(l.pass); }
   });
   return realm;
 }
@@ -228,7 +238,10 @@ const queues = {
 const settings = {
   all() {
     const out = { ...DEFAULT_SETTINGS };
-    for (const s of realm.objects('Setting')) { try { out[s.key] = JSON.parse(s.value); } catch { /* ignore */ } }
+    for (const s of realm.objects('Setting')) {
+      if (s.key.startsWith('__')) continue;   // أسرار داخلية (secrets) لا تُرسل للواجهة
+      try { out[s.key] = JSON.parse(s.value); } catch { /* ignore */ }
+    }
     return out;
   },
   save(patch) {
@@ -241,8 +254,11 @@ const settings = {
 
 /* ---------------- Site logins ---------------- */
 const logins = {
-  all() { return Array.from(realm.objects('SiteLogin'), l => ({ host: l.host, user: l.user, pass: l.pass })); },
-  save(l) { realm.write(() => { realm.create('SiteLogin', { host: l.host, user: l.user, pass: l.pass }, Realm.UpdateMode.Modified); }); },
+  /** للمحرك فقط: مع كلمة المرور مفكوكة */
+  all() { return Array.from(realm.objects('SiteLogin'), l => ({ host: l.host, user: l.user, pass: unseal(l.pass) })); },
+  /** للواجهة: بدون كلمات المرور */
+  list() { return Array.from(realm.objects('SiteLogin'), l => ({ host: l.host, user: l.user, hasPass: !!l.pass })); },
+  save(l) { realm.write(() => { realm.create('SiteLogin', { host: String(l.host || '').trim(), user: String(l.user || ''), pass: seal(l.pass) }, Realm.UpdateMode.Modified); }); },
   remove(host) { realm.write(() => { const o = realm.objectForPrimaryKey('SiteLogin', host); if (o) realm.delete(o); }); },
   forHost(host) {
     const h = String(host || '').toLowerCase();
@@ -250,4 +266,16 @@ const logins = {
   },
 };
 
-module.exports = { open, close, downloads, categories, queues, settings, logins, SCHEMA, engine: () => ({ name: ENGINE, error: ENGINE_ERROR }) };
+/* ---------------- Internal secrets (never sent to the UI) ---------------- */
+const secrets = {
+  get(key) {
+    const o = realm.objectForPrimaryKey('Setting', '__' + key);
+    if (!o) return null;
+    try { return JSON.parse(unseal(o.value) || 'null'); } catch { return null; }
+  },
+  set(key, value) {
+    realm.write(() => { realm.create('Setting', { key: '__' + key, value: seal(JSON.stringify(value)) }, Realm.UpdateMode.Modified); });
+  },
+};
+
+module.exports = { open, close, downloads, categories, queues, settings, logins, secrets, setCipher, SCHEMA, flush: () => { if (realm && !realm.isClosed) realm.flush(); } };

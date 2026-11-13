@@ -52,7 +52,7 @@
   /* ---------- formatting ---------- */
   function fmtSize(b) {
     if (b == null || b < 0) return '';
-    if (b < 1024) return b + ' B';
+    if (b < 1024) return Math.round(b) + ' B';
     const u = ['KB', 'MB', 'GB', 'TB'];
     let i = -1; do { b /= 1024; i++; } while (b >= 1024 && i < u.length - 1);
     return (b >= 100 ? b.toFixed(1) : b.toFixed(2)) + ' ' + u[i];
@@ -108,10 +108,18 @@
     if (typeof body === 'string') b.innerHTML = body; else if (body) b.append(body);
     const foot = h('div', { class: 'modal-f' });
     const api = { close, el: overlay, body: b, foot };
+    let busy = false;
     for (const btn of buttons) {
       if (btn === 'sp') { foot.append(h('span', { class: 'sp' })); continue; }
       if (btn.nodeType) { foot.append(btn); continue; }
-      const el = h('button', { class: 'btn ' + (btn.cls || ''), onclick: async () => { const r = await (btn.onClick ? btn.onClick(api) : true); if (r !== false) close(btn.value ?? true); } }, btn.label);
+      // busy: يمنع تنفيذ الزر مرتين (نقر مزدوج أو إبقاء Enter مضغوطاً) أثناء انتظار العملية
+      const el = h('button', { class: 'btn ' + (btn.cls || ''), onclick: async () => {
+        if (busy) return;
+        busy = true;
+        let r;
+        try { r = await (btn.onClick ? btn.onClick(api) : true); } finally { busy = false; }
+        if (r !== false) close(btn.value ?? true);
+      } }, btn.label);
       if (btn.id) el.id = btn.id;
       foot.append(el);
     }
@@ -119,8 +127,11 @@
     overlay.append(m);
     overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(null); });
     function onKey(e) {
-      if (e.key === 'Escape') { e.stopPropagation(); close(null); }
-      if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') { const p = foot.querySelector('.btn.primary'); if (p && !p.disabled && overlay.isConnected && overlay === $$('.overlay').pop()) { e.preventDefault(); p.click(); } }
+      // النافذة العليا فقط تستجيب للمفاتيح (Esc كان يغلق كل النوافذ المتراكبة)
+      if (overlay !== $$('.overlay').pop()) return;
+      if (e.key === 'Escape') { e.stopPropagation(); close(null); return; }
+      // Enter على زر (مثل «إلغاء») ينفّذ ذلك الزر نفسه لا الزر الأساسي
+      if (e.key === 'Enter' && !e.repeat && e.target.tagName !== 'TEXTAREA' && e.target.tagName !== 'BUTTON') { const p = foot.querySelector('.btn.primary'); if (p && !p.disabled && overlay.isConnected && overlay === $$('.overlay').pop()) { e.preventDefault(); p.click(); } }
     }
     document.addEventListener('keydown', onKey, true);
     document.body.append(overlay);

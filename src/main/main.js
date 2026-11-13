@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, Tray, Menu, nativeImage, Notification, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, Tray, Menu, nativeImage, Notification, powerSaveBlocker, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -16,6 +16,9 @@ const ROOT = path.join(__dirname, '..', '..');
 const RENDERER = path.join(__dirname, '..', 'renderer');
 const ICON = path.join(ROOT, 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon.png');
 const TRAY_ICON = path.join(ROOT, 'assets', 'tray.png');
+
+// للتطوير والاختبار: مجلد بيانات معزول (له قفل نسخة واحدة خاص به) كي لا تُمس بيانات النسخة المثبتة
+if (process.env.BARQ_USER_DATA) app.setPath('userData', path.resolve(process.env.BARQ_USER_DATA));
 
 if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 
@@ -56,7 +59,7 @@ function openProgress(id, opts = {}) {
   let w = progressWins.get(id);
   if (w && !w.isDestroyed()) { w.show(); w.focus(); return w; }
   w = new BrowserWindow({
-    width: 600, height: opts.complete ? 330 : 560, resizable: true, minimizable: true, maximizable: false, show: false,
+    width: 600, height: opts.complete || !manager.settings.progressDetails ? 330 : 560, resizable: true, minimizable: true, maximizable: false, show: false,
     icon: ICON, backgroundColor: '#f3f4f6', title: 'Barq',
     webPreferences: { preload: path.join(__dirname, '..', 'preload', 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: false },
   });
@@ -151,6 +154,57 @@ function extSourceDir() {
   return app.isPackaged ? path.join(process.resourcesPath, 'extensions') : (fs.existsSync(path.join(ROOT, 'dist-ext')) ? path.join(ROOT, 'dist-ext') : path.join(ROOT, 'extension'));
 }
 
+/* ---- اقتران إضافة المتصفح: موافقة المستخدم مرة واحدة لكل متصفح، ثم رمز سري محفوظ مشفّراً ----
+   كل متصفح/ملف شخصي له معرّف (clientId) خاص به حتى لو حمّلت كلها الإضافة من المجلد نفسه (نفس الـ Origin)،
+   فاقتران متصفح لا يلغي اقتران آخر. الرد على /pair فوري: «pending» ما دامت نافذة السؤال مفتوحة،
+   وبعد الموافقة تستلم الإضافة رمزها بمفتاحها (pairKey) ولو أُعيد تشغيل خدمتها أثناء الانتظار. */
+let pairOpenFor = null;                 // clientId الذي تُعرض له نافذة السؤال الآن
+const pairDenied = new Map();           // clientId -> وقت الرفض
+const PICKUP_MS = 10 * 60 * 1000;
+function bridgeLog(line) {
+  try {
+    const f = path.join(app.getPath('userData'), 'bridge.log');
+    // طلبات الفحص الدورية المتطابقة لا تُكرَّر في السجل
+    if (line === bridgeLog.last) return;
+    bridgeLog.last = line;
+    try { if (fs.statSync(f).size > 256 * 1024) fs.renameSync(f, f + '.old'); } catch { /* لا يوجد بعد */ }
+    fs.appendFileSync(f, `${new Date().toISOString()} ${line}\n`);
+  } catch { /* السجل للتشخيص فقط */ }
+}
+const bridgeAuth = {
+  tokenFor(clientId) { const c = (db.secrets.get('bridgeClients') || {})[clientId]; return c ? c.token : null; },
+  async requestPair({ clientId, pairKey, browser, ext, origin }) {
+    const c = (db.secrets.get('bridgeClients') || {})[clientId];
+    if (c && c.pickupKey && c.pickupKey === pairKey && Date.now() < (c.pickupUntil || 0)) return { status: 'approved', token: c.token };
+    if (pairOpenFor === clientId) return { status: 'pending' };
+    if (Date.now() - (pairDenied.get(clientId) || 0) < 30000) return { status: 'denied' };
+    if (pairOpenFor) return { status: 'pending' };          // نافذة لمتصفح آخر مفتوحة: يأتي دوره بعدها
+    pairOpenFor = clientId;
+    const en = manager.settings.lang === 'en';
+    const name = BR.browserFromPing(browser, '') || 'browser';
+    bridgeLog(`pair dialog shown for client=${clientId.slice(0, 6)} browser=${name} ext=${ext}`);
+    showMain();                                              // السؤال يظهر أمام المستخدم لا خلف المتصفح
+    dialog.showMessageBox(mainWin && !mainWin.isDestroyed() ? mainWin : undefined, {
+      type: 'question', title: 'Barq', noLink: true, defaultId: 0, cancelId: 1,
+      buttons: en ? ['Allow', 'Deny'] : ['السماح', 'رفض'],
+      message: en ? `The Barq extension in ${name} wants to connect to this app.` : `إضافة برق في متصفح ${name} تطلب الاتصال بالبرنامج.`,
+      detail: (en
+        ? 'Allow only if you have just installed or updated the Barq extension in that browser. Once allowed it can send downloads to Barq.'
+        : 'اسمح فقط إذا كنت قد ثبّت أو حدّثت إضافة برق في ذلك المتصفح الآن. بعد السماح تستطيع إرسال التنزيلات إلى برق.')
+        + `\n\n${origin}${ext ? `  (v${ext})` : ''}`,
+    }).then((r) => {
+      if (r.response !== 0) { pairDenied.set(clientId, Date.now()); bridgeLog(`pair denied client=${clientId.slice(0, 6)}`); return; }
+      const all = db.secrets.get('bridgeClients') || {};
+      all[clientId] = { token: require('crypto').randomBytes(32).toString('hex'), browser: name, origin, at: Date.now(), pickupKey: pairKey, pickupUntil: Date.now() + PICKUP_MS };
+      // حد أعلى لعدد المتصفحات المقترنة: الأقدم يُحذف
+      const ids = Object.keys(all).sort((x, y) => all[y].at - all[x].at);
+      for (const k of ids.slice(30)) delete all[k];
+      db.secrets.set('bridgeClients', all);
+      bridgeLog(`pair approved client=${clientId.slice(0, 6)} (clients now: ${Math.min(ids.length, 30)})`);
+    }).catch((e) => bridgeLog('pair dialog error ' + e.message)).finally(() => { pairOpenFor = null; });
+    return { status: 'pending' };
+  },
+};
 function updatePowerBlock() {
   const active = manager.tasks.size > 0;
   if (active && psbId == null) psbId = powerSaveBlocker.start('prevent-app-suspension');
@@ -277,9 +331,22 @@ function applyAutoStart(on) {
 }
 
 /* ------------------------------------------------------------------ */
+// صفحات البرنامج فقط (file:// داخل مجلد الواجهة) يُسمح لها باستدعاء القنوات
+const RENDERER_URL = require('url').pathToFileURL(RENDERER).href.replace(/\/?$/, '/');
+function trustedSender(e) {
+  const u = (e.senderFrame && e.senderFrame.url) || '';
+  return u.startsWith(RENDERER_URL);
+}
+// لا تنقّل ولا نوافذ جديدة: إفلات رابط أو ملف HTML على النافذة لا يستبدل واجهة البرنامج
+app.on('web-contents-created', (_e, wc) => {
+  wc.on('will-navigate', (ev) => ev.preventDefault());
+  wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+});
+
 function registerIpc() {
-  const h = (ch, fn) => ipcMain.handle(ch, async (_e, ...a) => {
-    try { return { ok: true, data: await fn(...a) }; } catch (e) { return { ok: false, error: e.message || String(e) }; }
+  const h = (ch, fn) => ipcMain.handle(ch, async (e, ...a) => {
+    if (!trustedSender(e)) return { ok: false, error: 'forbidden' };
+    try { return { ok: true, data: await fn(...a) }; } catch (e2) { return { ok: false, error: e2.message || String(e2) }; }
   });
   h('state', () => manager.state());
   h('addData', (k) => { const d = addPending.get(String(k)); addPending.delete(String(k)); return d || null; });
@@ -291,7 +358,7 @@ function registerIpc() {
   h('pause', (ids) => manager.pause(ids));
   h('stopAll', () => manager.stopAll());
   h('remove', (ids, del) => manager.remove(ids, del));
-  h('removeCompleted', () => manager.removeCompleted());
+  h('removeCompleted', (del) => manager.removeCompleted(del === true));
   h('redownload', (id) => manager.redownload(id));
   h('props', (id, patch) => manager.updateProps(id, patch));
   h('moveToQueue', (ids, q) => manager.moveToQueue(ids, q));
@@ -314,8 +381,8 @@ function registerIpc() {
   }));
   h('saveCategory', (c) => manager.saveCategory(c));
   h('removeCategory', (n) => manager.removeCategory(n));
-  h('saveLogin', (l) => { manager.db.logins.save(l); return manager.db.logins.all(); });
-  h('removeLogin', (host) => { manager.db.logins.remove(host); return manager.db.logins.all(); });
+  h('saveLogin', (l) => { manager.db.logins.save(l); return manager.db.logins.list(); });
+  h('removeLogin', (host) => { manager.db.logins.remove(host); return manager.db.logins.list(); });
   h('merge', (v, a) => manager.merge(v, a));
   h('addPlaylist', (entries, o) => manager.addPlaylist(entries, o));
   h('components', () => manager.components.status());
@@ -370,10 +437,7 @@ function registerIpc() {
   });
   h('copyText', (t) => { clipboard.writeText(String(t)); return true; });
   h('appInfo', () => {
-    let realmVer = '';
-    try { realmVer = require('realm/package.json').version; } catch { /* ignore */ }
-    const eng = db.engine();
-    return { version: app.getVersion(), electron: process.versions.electron, realm: realmVer, engine: eng.name, engineError: eng.error, userData: app.getPath('userData') };
+    return { version: app.getVersion(), electron: process.versions.electron, engine: 'json', userData: app.getPath('userData') };
   });
   h('quit', () => { quitting = true; app.quit(); });
   ipcMain.on('win:close', (e) => BrowserWindow.fromWebContents(e.sender)?.close());
@@ -392,6 +456,12 @@ app.whenReady().then(() => {
   if (process.platform === 'win32') app.setAppUserModelId('com.barq.dm');
   // الإضافة: نسخة ثابتة المسار في بيانات المستخدم، تُحدَّث مع كل إصدار من البرنامج
   try { extInfo = BR.syncExtensions(extSourceDir(), path.join(app.getPath('userData'), 'extensions')); } catch (e) { console.error('ext sync', e.message); extInfo = { dir: extSourceDir(), version: '' }; }
+  // كلمات مرور المواقع ورموز الإضافة تُشفَّر بحساب ويندوز الحالي (DPAPI عبر safeStorage)
+  try {
+    if (safeStorage.isEncryptionAvailable()) {
+      db.setCipher({ enc: (s) => safeStorage.encryptString(s).toString('base64'), dec: (b) => safeStorage.decryptString(Buffer.from(b, 'base64')) });
+    }
+  } catch (e) { console.error('safeStorage', e.message); }
   db.open(path.join(app.getPath('userData'), 'barq.realm'));
   const components = new Components({
     binDir: path.join(app.getPath('userData'), 'bin'),
@@ -411,7 +481,8 @@ app.whenReady().then(() => {
   if (manager.settings.browserIntegration) {
     startBridge({
       port: manager.settings.bridgePort, version: app.getVersion(), onAdd: handleExternal,
-      onPing: (p) => { extConnections.set(p.origin, { browser: BR.browserFromPing(p.browser, p.ua), ext: p.ext, time: Date.now() }); },
+      auth: bridgeAuth, onLog: bridgeLog,
+      onPing: (p) => { extConnections.set(p.origin, { browser: BR.browserFromPing(p.browser, p.ua), ext: p.ext, paired: p.paired, time: Date.now() }); },
       getConfig: () => ({ captureExts: manager.settings.captureExts, enabled: manager.settings.browserIntegration, lang: manager.settings.lang, version: app.getVersion() }),
     }).then((r) => {
       bridge = r.server;
