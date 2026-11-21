@@ -100,6 +100,24 @@ class Manager extends EventEmitter {
     return { url, finalUrl: p.finalUrl, fileName: p.fileName, size: p.size, resumable: p.resumable, mime: p.mime, kind: 'http', category, saveDir: this.dirFor(category) };
   }
 
+  /**
+   * فحص مسبق تطلبه إضافة المتصفح قبل أن تلغي تنزيل المتصفح: هل يقبل الخادم طلب برق؟
+   * بعض المواقع لا تسلّم ملفاتها إلا للمتصفح نفسه (فحص ضد البرامج الآلية) — عندها يبقى التنزيل في المتصفح.
+   * أي شك (مهلة، خطأ شبكة، خطأ آخر) يُعدّ «نعم» ليبقى السلوك كما كان.
+   */
+  async precheck({ url, referer, cookies, userAgent, headers, kind } = {}) {
+    url = String(url || '').trim();
+    if (!U.isHttpUrl(url) || kind === 'ytdlp' || isYtdlpUrl(url) || /\.(m3u8|mpd)(\?|$)/i.test(url)) return { ok: true };
+    const rec = { referer, cookies, userAgent, headers: headers && typeof headers === 'object' ? JSON.stringify(headers) : '{}' };
+    try {
+      await probe(url, require('./engine').buildHeaders(rec, this._auth(url)), 6000);
+      return { ok: true };
+    } catch (e) {
+      if (e && (e.botwall || e.status === 401 || e.status === 403)) return { ok: false, status: e.status, botwall: !!e.botwall };
+      return { ok: true };
+    }
+  }
+
   async _inspectYtdlp(o) {
     const rec = { _id: 'inspect', url: o.url, referer: o.referer || '', cookies: o.cookies || '', userAgent: o.userAgent || '', headers: o.headers ? JSON.stringify(o.headers) : '{}' };
     const info = await ytdlpInfo(this.components, rec);

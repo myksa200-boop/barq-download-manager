@@ -26,7 +26,7 @@ function sameSecret(a, b) {
   return x.length > 0 && x.length === y.length && crypto.timingSafeEqual(x, y);
 }
 
-function startBridge({ port, onAdd, getConfig, version, onPing, auth, onLog }) {
+function startBridge({ port, onAdd, getConfig, version, onPing, auth, onLog, onCheck }) {
   const makeServer = () => http.createServer((req, res) => {
     const origin = req.headers.origin || '';
     const allowed = !origin || EXT_ORIGIN.test(origin);
@@ -99,6 +99,16 @@ function startBridge({ port, onAdd, getConfig, version, onPing, auth, onLog }) {
     if (req.method === 'GET' && route === '/config') {
       if (!authorized()) return reply(401, { error: 'unauthorized' });
       return reply(200, getConfig());
+    }
+
+    // فحص مسبق: هل يستطيع البرنامج الوصول إلى هذا الملف؟ (الإضافة تسأل قبل أن تلغي تنزيل المتصفح)
+    if (req.method === 'POST' && route === '/check') {
+      if (!authorized()) { req.resume(); return reply(401, { error: 'unauthorized' }); }
+      if (!onCheck) { req.resume(); return reply(404, { error: 'not found' }); }
+      return readJson((data) => {
+        if (!/^https?:\/\//i.test(data.url || '')) return reply(400, { error: 'no valid url' });
+        Promise.resolve().then(() => onCheck(data)).then((r) => reply(200, r && r.ok === false ? { ok: false, status: r.status || 0, botwall: !!r.botwall } : { ok: true }), () => reply(200, { ok: true }));
+      });
     }
 
     if (req.method === 'POST' && (route === '/download' || route === '/batch')) {

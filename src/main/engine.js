@@ -43,7 +43,12 @@ async function probe(url, headers = {}, timeout = 30000) {
     ({ res, url: finalUrl } = await request(url, { headers, timeout }));
   }
   try {
-    if (res.statusCode >= 400) throw new HttpError(res.statusCode);
+    if (res.statusCode >= 400) {
+      // صفحة فحص «هل أنت متصفح؟» (Cloudflare وأمثاله): الموقع لا يسلّم ملفاته إلا للمتصفح نفسه
+      const html = /text\/html/i.test(res.headers['content-type'] || '');
+      const botwall = /challenge/i.test(res.headers['cf-mitigated'] || '') || ([403, 503].includes(res.statusCode) && html && /cloudflare|ddos-guard|sucuri|akamai/i.test(res.headers.server || ''));
+      throw Object.assign(new HttpError(res.statusCode), { botwall });
+    }
     let size = -1;
     let resumable = false;
     if (res.statusCode === 206) {
@@ -96,6 +101,7 @@ function buildHeaders(rec, auth) {
 
 function friendlyError(e) {
   if (e instanceof HttpError) {
+    if (e.botwall) return `HTTP ${e.status} — هذا الموقع لا يسلّم ملفاته إلا للمتصفح نفسه (حماية ضد برامج التنزيل). نزّل الملف من المتصفح مباشرة`;
     const map = {
       401: 'HTTP 401 — يتطلب الخادم تسجيل دخول (أضف بيانات الموقع في الخيارات)',
       403: 'HTTP 403 Forbidden — الرابط منتهي الصلاحية أو محمي. حدّث الرابط من الخصائص',

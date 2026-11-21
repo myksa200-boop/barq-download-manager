@@ -200,6 +200,28 @@ async function sendToApp(items, batch = false) {
   return r.json();
 }
 
+/**
+ * هل يستطيع برنامج برق الوصول إلى هذا الملف؟ بعض المواقع لا تسلّم ملفاتها إلا للمتصفح نفسه
+ * (فحص ضد البرامج الآلية) فيرد على البرنامج بـ 403. أي شك (برنامج أقدم، مهلة، خطأ) يُعدّ «نعم».
+ */
+async function appCanFetch(it) {
+  try {
+    await ready;
+    if (!activePort || !trusted) return true;   // الكوكيز لا تُرسل إلا لبرنامج أثبت هويته
+    const ctl = new AbortController();
+    const tm = setTimeout(() => ctl.abort(), 8000);
+    try {
+      const r = await fetch(base() + '/check', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, targetAddressSpace: 'loopback', signal: ctl.signal,
+        body: JSON.stringify({ url: it.url, referer: it.referer || '', cookies: await cookiesFor(it.url), userAgent: navigator.userAgent }),
+      });
+      if (!r.ok) return true;
+      const j = await r.json();
+      return !(j && j.ok === false);
+    } finally { clearTimeout(tm); }
+  } catch { return true; }
+}
+
 function extOf(s) {
   try { s = new URL(s).pathname; } catch { /* ignore */ }
   const m = /\.([a-z0-9]{1,6})$/i.exec(s || '');
@@ -222,10 +244,20 @@ B.downloads.onCreated.addListener(async (item) => {
   if (!wanted(url, item.filename, item.mime)) return;
   if (!appAlive && !(await refreshApp())) return;          // البرنامج غير مشغّل: اترك المتصفح يكمل
   if (!appConfig.enabled) return;
+  const job = { url, referer: item.referrer || '', fileName: (item.filename || '').split(/[\\/]/).pop(), mime: item.mime || '' };
+  // نوقف تنزيل المتصفح مؤقتاً ونسأل البرنامج: إن كان الموقع يرفضه فالتنزيل يكمل في المتصفح كأن شيئاً لم يكن
+  const paused = await B.downloads.pause(item.id).then(() => true, () => false);
+  if (!(await appCanFetch(job))) {
+    if (paused) {
+      try { await B.downloads.resume(item.id); }
+      catch { skip.add(url); B.downloads.cancel(item.id).catch(() => {}); B.downloads.download({ url }); }
+    }
+    return;
+  }
   try {
     await B.downloads.cancel(item.id);
     await B.downloads.erase({ id: item.id });
-    await sendToApp([{ url, referer: item.referrer || '', fileName: (item.filename || '').split(/[\\/]/).pop(), mime: item.mime || '' }]);
+    await sendToApp([job]);
   } catch (e) {
     console.warn('Barq: falling back to browser download', e);
     skip.add(url);

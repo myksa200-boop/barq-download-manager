@@ -481,7 +481,7 @@ app.whenReady().then(() => {
   if (manager.settings.browserIntegration) {
     startBridge({
       port: manager.settings.bridgePort, version: app.getVersion(), onAdd: handleExternal,
-      auth: bridgeAuth, onLog: bridgeLog,
+      auth: bridgeAuth, onLog: bridgeLog, onCheck: (it) => manager.precheck(it),
       onPing: (p) => { extConnections.set(p.origin, { browser: BR.browserFromPing(p.browser, p.ua), ext: p.ext, paired: p.paired, time: Date.now() }); },
       getConfig: () => ({ captureExts: manager.settings.captureExts, enabled: manager.settings.browserIntegration, lang: manager.settings.lang, version: app.getVersion() }),
     }).then((r) => {
