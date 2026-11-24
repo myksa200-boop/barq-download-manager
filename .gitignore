@@ -4,3 +4,5 @@ release/
 *.realm.lock
 *.realm.management/
 dist-ext/
+
+test/electron/result.txt

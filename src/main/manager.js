@@ -86,7 +86,7 @@ class Manager extends EventEmitter {
       return { url, fileName, size: -1, resumable: true, kind: 'hls', mime: 'application/vnd.apple.mpegurl', variants, category: 'Video', saveDir: this.dirFor('Video') };
     }
     let p;
-    try { p = await probe(url, h, this.settings.timeout * 1000); } catch (e) { throw new Error(friendlyError(e)); }
+    try { p = await probe(url, h, this.settings.timeout * 1000, { retries: 2 }); } catch (e) { throw new Error(friendlyError(e)); }
     if (/dash\+xml/i.test(p.mime)) return this._inspectDash(p.finalUrl, h);
     // صفحة ويب وليست ملفاً: نحاول استخراج الفيديو منها عبر yt-dlp (المستخرج العام)
     if (this.components && /text\/html|xhtml/i.test(p.mime)) {
@@ -110,7 +110,7 @@ class Manager extends EventEmitter {
     if (!U.isHttpUrl(url) || kind === 'ytdlp' || isYtdlpUrl(url) || /\.(m3u8|mpd)(\?|$)/i.test(url)) return { ok: true };
     const rec = { referer, cookies, userAgent, headers: headers && typeof headers === 'object' ? JSON.stringify(headers) : '{}' };
     try {
-      await probe(url, require('./engine').buildHeaders(rec, this._auth(url)), 6000);
+      await probe(url, require('./engine').buildHeaders(rec, this._auth(url)), 6000, { retries: 0 });   // الإضافة تنتظر 8 ثوانٍ فقط
       return { ok: true };
     } catch (e) {
       if (e && (e.botwall || e.status === 401 || e.status === 403)) return { ok: false, status: e.status, botwall: !!e.botwall };

@@ -14,7 +14,7 @@ const fsp = fs.promises;
 const path = require('path');
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
-const { request, fetchBuffer, HttpError } = require('./net');
+const { request, fetchBuffer, HttpError, retryAfterMs } = require('./net');
 const { fileNameFromDisposition, fileNameFromUrl, sleep } = require('./utils');
 
 const MIN_SEG = 256 * 1024;          // أصغر قطعة يُسمح بتقسيمها
@@ -36,18 +36,42 @@ class Limiter {
 }
 
 /* ------------------------------------------------------------------ */
-async function probe(url, headers = {}, timeout = 30000) {
-  let { res, url: finalUrl } = await request(url, { headers: { ...headers, Range: 'bytes=0-' }, timeout });
-  if (res.statusCode === 416) {
-    res.destroy();
-    ({ res, url: finalUrl } = await request(url, { headers, timeout }));
+/**
+ * فحص الرابط قبل التنزيل: الحجم ودعم الاستئناف واسم الملف، والمحرك/الهوية التي قبلها الخادم.
+ * يعيد المحاولة عند «طلبات كثيرة» (429) و«الخدمة غير متاحة» (503) مع احترام Retry-After،
+ * وعند انقطاع عابر في الشبكة. opts.retries = عدد إعادات المحاولة (0 للفحص السريع).
+ */
+const PROBE_RETRY_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH', 'ECONNABORTED']);
+async function probe(url, headers = {}, timeout = 30000, opts = {}) {
+  const retries = opts.retries == null ? 3 : opts.retries;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await probeOnce(url, headers, timeout, opts);
+    } catch (e) {
+      const limited = e instanceof HttpError && [429, 503].includes(e.status) && !e.botwall;
+      const transient = !(e instanceof HttpError) && PROBE_RETRY_CODES.has(e.code) && e.code !== 'ETIMEDOUT';
+      if (attempt >= retries || !(limited || transient) || (transient && attempt >= 1) || (opts.isCancelled && opts.isCancelled())) throw e;
+      const backoff = Math.min(8000, 1000 * 2 ** attempt);
+      await sleep(limited && e.retryAfter ? Math.min(20000, Math.max(500, e.retryAfter)) : backoff);
+      if (opts.isCancelled && opts.isCancelled()) throw e;
+    }
   }
+}
+
+async function probeOnce(url, headers, timeout, opts) {
+  const ro = { timeout, transport: opts.transport, lane: opts.lane };
+  let r = await request(url, { ...ro, headers: { ...headers, Range: 'bytes=0-' } });
+  if (r.res.statusCode === 416) {
+    r.res.destroy();
+    r = await request(url, { ...ro, headers });
+  }
+  const { res, url: finalUrl } = r;
   try {
     if (res.statusCode >= 400) {
       // صفحة فحص «هل أنت متصفح؟» (Cloudflare وأمثاله): الموقع لا يسلّم ملفاته إلا للمتصفح نفسه
       const html = /text\/html/i.test(res.headers['content-type'] || '');
       const botwall = /challenge/i.test(res.headers['cf-mitigated'] || '') || ([403, 503].includes(res.statusCode) && html && /cloudflare|ddos-guard|sucuri|akamai/i.test(res.headers.server || ''));
-      throw Object.assign(new HttpError(res.statusCode), { botwall });
+      throw Object.assign(new HttpError(res.statusCode), { botwall, retryAfter: retryAfterMs(res.headers['retry-after']) });
     }
     let size = -1;
     let resumable = false;
@@ -62,6 +86,7 @@ async function probe(url, headers = {}, timeout = 30000) {
     return {
       size, resumable: resumable && size > 0, finalUrl, mime, fileName,
       etag: res.headers.etag || '', lastModified: res.headers['last-modified'] || '', status: res.statusCode,
+      transport: r.transport || 'node', userAgent: r.userAgent || '', altSvc: String(res.headers['alt-svc'] || ''),
     };
   } finally { res.destroy(); }
 }
@@ -184,13 +209,21 @@ class HttpTask extends BaseTask {
     };
   }
 
-  headers() { return buildHeaders(this.rec, this.auth); }
+  headers() {
+    const h = buildHeaders(this.rec, this.auth);
+    // الهوية التي قبلها الخادم أثناء الفحص (إن رفض هوية المتصفح) تُستخدم لكل الاتصالات
+    if (this.probeUA && !Object.keys(h).some(k => /^user-agent$/i.test(k))) h['User-Agent'] = this.probeUA;
+    return h;
+  }
+
+  /** خيارات الطلب لكل اتصال: نفس المحرك الذي نجح في الفحص، ولكل اتصال مساره في محرك Chromium */
+  reqOpts(w) { return { transport: this.transport || 'node', lane: w ? w.n : undefined }; }
 
   /** مصادر إضافية (Mirrors) لنفس الملف: تُقبل فقط إذا طابق الحجم ودعمت الاستئناف */
   async _probeMirrors(size) {
     const list = String(this.rec.mirrors || '').split(/\s+/).filter(u => /^https?:\/\//i.test(u) && u !== this.rec.url);
     if (!list.length || !(size > 0)) return;
-    const ok = await Promise.all(list.map(u => probe(u, this.headers(), Math.min(this.timeout, 15000)).then(m => (m.resumable && m.size === size ? m.finalUrl : null)).catch(() => null)));
+    const ok = await Promise.all(list.map(u => probe(u, this.headers(), Math.min(this.timeout, 15000), { retries: 1, transport: this.transport }).then(m => (m.resumable && m.size === size ? m.finalUrl : null)).catch(() => null)));
     for (const u of ok) if (u && !this.urls.includes(u)) this.urls.push(u);
     this.stats.mirrors = this.urls.length - 1;
   }
@@ -201,13 +234,17 @@ class HttpTask extends BaseTask {
     this.emit('status', 'connecting');
     let meta;
     try {
-      meta = await probe(this.rec.url, this.headers(), this.timeout);
+      this.transport = null; this.probeUA = '';
+      meta = await probe(this.rec.url, this.headers(), this.timeout, { isCancelled: () => !this.running });
     } catch (e) {
+      const paused = !this.running;
       this.running = false;
-      this.emit('error', e, friendlyError(e));
+      if (!paused) this.emit('error', e, friendlyError(e));
       return;
     }
     if (!this.running) return;
+    this.transport = meta.transport;
+    this.probeUA = meta.userAgent;
     this.url = meta.finalUrl;
     this.urls = [meta.finalUrl];
     this.resumable = meta.resumable;
@@ -218,6 +255,10 @@ class HttpTask extends BaseTask {
     if (changed || !this.resumable) this.segments = [];
     this.size = meta.size;
     this.emit('meta', { size: meta.size, resumable: meta.resumable, finalUrl: meta.finalUrl, mime: meta.mime, etag: meta.etag });
+    // HTTP/3: يتعلم Chromium أن الخادم يدعم QUIC من أول رد (Alt-Svc) في كل مسار، فنسخّن المسارات بطلب صغير
+    // حتى تبدأ اتصالات التنزيل نفسها على HTTP/3 بدل TCP
+    if (this.transport === 'chromium' && this.resumable && /\bh3\b/i.test(meta.altSvc)) await this._warmLanes();
+    if (!this.running) return;
 
     try {
       await fsp.mkdir(this.rec.saveDir, { recursive: true });
@@ -245,6 +286,13 @@ class HttpTask extends BaseTask {
     if (this.resumable) this._fill();
     else this._spawn({ start: 0, end: this.size > 0 ? this.size - 1 : Number.MAX_SAFE_INTEGER, pos: 0 }, true);
     if (this.resumable && this.segments.every(s => s.pos > s.end)) this._finish();
+  }
+
+  async _warmLanes() {
+    const n = Math.min(this.maxConns, 32);
+    await Promise.all(Array.from({ length: n }, (_, i) => request(this.url, {
+      headers: { ...this.headers(), Range: 'bytes=0-0' }, timeout: 5000, transport: 'chromium', lane: i + 1,
+    }).then(r => { r.res.resume(); }, () => {})));
   }
 
   _initialSegments() {
@@ -332,7 +380,7 @@ class HttpTask extends BaseTask {
         w.info = 'connecting';
         w.restartFlag = false;
         const { res, req } = await request(url, {
-          headers: { ...this.headers(), Range: `bytes=${w.seg.pos}-${w.seg.end}` }, timeout: this.timeout, signal: this.abort.signal,
+          headers: { ...this.headers(), Range: `bytes=${w.seg.pos}-${w.seg.end}` }, timeout: this.timeout, signal: this.abort.signal, ...this.reqOpts(w),
         });
         w.req = req;
         if (res.statusCode >= 400) { res.resume(); throw new HttpError(res.statusCode); }
@@ -435,7 +483,7 @@ class HttpTask extends BaseTask {
     while (this.running) {
       try {
         w.info = 'connecting';
-        const { res, req } = await request(this.url, { headers: this.headers(), timeout: this.timeout, signal: this.abort.signal });
+        const { res, req } = await request(this.url, { headers: this.headers(), timeout: this.timeout, signal: this.abort.signal, ...this.reqOpts(w) });
         w.req = req;
         if (res.statusCode >= 400) { res.resume(); throw new HttpError(res.statusCode); }
         if (attempt > 0) { await this.fh.truncate(0); this.downloaded = 0; w.seg.pos = 0; w.bytes = 0; }

@@ -17,6 +17,7 @@ const DEFAULT_SETTINGS = {
   lang: 'ar',
   theme: 'light',
   maxConnections: 8,
+  netEngine: 'auto',        // auto = HTTP/1.1 متعدد الاتصالات أولاً | chromium = HTTP/2 وHTTP/3 (QUIC) أولاً
   speedLimit: 0,            // KB/s, 0 = unlimited (global)
   retries: 5,
   timeout: 30,              // seconds

@@ -470,6 +470,11 @@ app.whenReady().then(() => {
   });
   try { components.cleanupTemp(); } catch { /* ignore */ }
   manager = new Manager(db, { defaultRoot: app.getPath('downloads'), components });
+  // محرك Chromium (HTTP/2 وHTTP/3) متاح بعد جاهزية البرنامج: بديل تلقائي، أو المحرك الأول إن اختاره المستخدم
+  try {
+    const NET = require('./net');
+    if (NET.enableChromium()) NET.configure({ engine: () => (manager && manager.settings.netEngine) || 'auto' });
+  } catch (e) { console.error('net engine', e.message); }
   // تسجيل التشغيل مع النظام في كل تشغيل (المسار قد يتغير بعد التحديث أو نقل النسخة المحمولة)
   applyAutoStart(manager.settings.autoStart);
   setTimeout(() => components.autoUpdate(), 20000);

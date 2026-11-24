@@ -1,0 +1,4 @@
+{
+  "name": "barq-chromium-test",
+  "main": "../chromium.electron.js"
+}

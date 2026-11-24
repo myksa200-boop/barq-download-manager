@@ -320,6 +320,8 @@
     // Connection
     const conn = h('div', { class: 'form' },
       lbl('maxConn'), bind('maxConnections', sel([1, 2, 4, 6, 8, 12, 16, 24, 32].map(n => [n, n]), s.maxConnections, { style: { width: '120px' } })),
+      lbl('netEngine'), bind('netEngine', sel([['auto', t('ne_auto')], ['chromium', t('ne_chromium')]], s.netEngine || 'auto', { style: { width: '100%' } })),
+      h('span'), h('div', { class: 'hint' }, t('ne_hint')),
       lbl('retries'), bind('retries', field({ type: 'number', min: 0, max: 50, value: s.retries, style: { width: '120px' } })),
       lbl('timeout'), bind('timeout', field({ type: 'number', min: 5, max: 600, value: s.timeout, style: { width: '120px' } })),
       lbl('globalLimit'), bind('speedLimit', field({ type: 'number', min: 0, value: s.speedLimit, style: { width: '120px' } })),
