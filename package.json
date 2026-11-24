@@ -1,7 +1,7 @@
 {
   "name": "barq-dm",
   "productName": "Barq Download Manager",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "برق — مدير تنزيلات سريع بتقطيع ديناميكي متعدد الاتصالات (Electron + Realm)",
   "main": "src/main/main.js",
   "author": "Barq",
@@ -9,7 +9,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "test": "node test/engine.test.js && node test/manager.test.js && node test/dash.test.js && node test/ytdlp.test.js && node test/precheck.test.js && node test/extension.test.js",
+    "test": "node test/engine.test.js && node test/hls-map.test.js && node test/manager.test.js && node test/dash.test.js && node test/ytdlp.test.js && node test/precheck.test.js && node test/extension.test.js",
     "dist": "node scripts/pack-extensions.js && electron-builder",
     "dist:win": "node scripts/pack-extensions.js && electron-builder --win nsis portable --x64",
     "pack:ext": "node scripts/pack-extensions.js",

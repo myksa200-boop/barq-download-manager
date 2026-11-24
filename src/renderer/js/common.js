@@ -194,5 +194,24 @@
 
   function applyTheme(theme) { document.documentElement.dataset.theme = theme === 'dark' ? 'dark' : 'light'; }
 
-  window.UI = { $, $$, h, esc, ltr, icon, fileColor, fmtSize, fmtSpeed, fmtTime, fmtDate, pct, toast, chime, modal, confirmBox, tabs, showMenu, closeMenus, applyTheme, CAT_COLORS };
+  /** حقل رقمي بأرقام لاتينية. <input type=number> يعرض الأرقام بالهندية (٣٠) حين تكون لغة البرنامج
+   *  العربية ولا يتأثر بخاصية lang، فنستخدم حقلاً نصياً رقمياً: الأرقام العربية المكتوبة تُحوَّل
+   *  إلى لاتينية، وتُحترم min/max عند التغيير، و data-num يجعل قيمته تُقرأ رقماً. */
+  function numInput(attrs = {}) {
+    const { type, min, max, ...rest } = attrs;
+    const el = h('input', { class: 'field', ...rest, type: 'text', inputmode: 'numeric', dir: 'ltr', 'data-num': '1' });
+    el.addEventListener('input', () => {
+      const v = el.value.replace(/[\u0660-\u0669]/g, d => String(d.charCodeAt(0) - 0x660)).replace(/[\u06f0-\u06f9]/g, d => String(d.charCodeAt(0) - 0x6f0)).replace(/\D/g, '');
+      if (v !== el.value) el.value = v;
+    });
+    el.addEventListener('change', () => {
+      let n = Number(el.value) || 0;
+      if (min != null) n = Math.max(Number(min), n);
+      if (max != null) n = Math.min(Number(max), n);
+      el.value = String(n);
+    });
+    return el;
+  }
+
+  window.UI = { $, $$, h, esc, ltr, icon, fileColor, fmtSize, fmtSpeed, fmtTime, fmtDate, pct, toast, chime, modal, confirmBox, tabs, showMenu, closeMenus, applyTheme, numInput, CAT_COLORS };
 })();

@@ -57,21 +57,32 @@ function request(url, { method = 'GET', headers = {}, timeout = 30000, maxRedire
       }
       const req = mod.request(parsed, { method, headers: h, agent: agents[parsed.protocol] });
       let done = false;
-      const fail = (e) => { if (!done) { done = true; req.destroy(); reject(e); } };
+      // مستمع الإيقاف يُزال حين ينتهي الطلب: الإشارة نفسها مشتركة بين كل مقاطع التنزيل،
+      // وتركه كان يراكم مستمعاً (يمسك الطلب في الذاكرة) لكل مقطع حتى ينتهي التنزيل كله.
+      let onAbort = null;
+      const unlisten = () => { if (onAbort) { signal.removeEventListener('abort', onAbort); onAbort = null; } };
+      const fail = (e) => { if (!done) { done = true; unlisten(); req.destroy(); reject(e); } };
       req.setTimeout(timeout, () => fail(Object.assign(new Error('Connection timed out'), { code: 'ETIMEDOUT' })));
       req.on('error', fail);
       if (signal) {
         if (signal.aborted) return fail(Object.assign(new Error('aborted'), { code: 'ABORTED' }));
-        signal.addEventListener('abort', () => fail(Object.assign(new Error('aborted'), { code: 'ABORTED' })), { once: true });
+        onAbort = () => fail(Object.assign(new Error('aborted'), { code: 'ABORTED' }));
+        signal.addEventListener('abort', onAbort, { once: true });
       }
       req.on('response', (res) => {
         if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
           res.resume();
           if (++redirects > maxRedirects) return fail(new Error('Too many redirects'));
-          done = true;
+          done = true; unlisten();
           return go(new URL(res.headers.location, u).toString());
         }
-        done = true;
+        done = true; unlisten();
+        // الإيقاف أثناء قراءة الجسم: يُغلق الاستجابة ويُزال المستمع عند انتهائها
+        if (signal) {
+          const onBodyAbort = () => res.destroy(Object.assign(new Error('aborted'), { code: 'ABORTED' }));
+          signal.addEventListener('abort', onBodyAbort, { once: true });
+          res.once('close', () => signal.removeEventListener('abort', onBodyAbort));
+        }
         // مهلة القراءة: إن توقف الخادم عن الإرسال
         res.setTimeout?.(timeout, () => res.destroy(Object.assign(new Error('Read timed out'), { code: 'ETIMEDOUT' })));
         resolve({ res, req, url: u });

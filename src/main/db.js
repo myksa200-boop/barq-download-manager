@@ -241,6 +241,9 @@ const settings = {
     for (const s of realm.objects('Setting')) {
       if (s.key.startsWith('__')) continue;   // أسرار داخلية (secrets) لا تُرسل للواجهة
       try { out[s.key] = JSON.parse(s.value); } catch { /* ignore */ }
+      // القوائم المنسدلة كانت تحفظ الأرقام نصاً ("32"): تُعاد رقماً
+      const v = out[s.key];
+      if (typeof DEFAULT_SETTINGS[s.key] === 'number' && typeof v === 'string' && v.trim() !== '' && isFinite(Number(v))) out[s.key] = Number(v);
     }
     return out;
   },

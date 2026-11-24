@@ -12,7 +12,8 @@
     if (!c) return S().root;
     return isAbs(c.folder) ? c.folder : S().root.replace(/[\\/]+$/, '') + sep() + c.folder;
   }
-  const field = (attrs) => h('input', { class: 'field', ...attrs });
+  // حقول الأرقام بأرقام لاتينية كبقية البرنامج (انظر UI.numInput)
+  const field = (attrs) => (attrs && attrs.type === 'number' ? UI.numInput(attrs) : h('input', { class: 'field', ...attrs }));
   const sel = (opts, value, attrs = {}) => {
     const s = h('select', { class: 'field', ...attrs });
     for (const [v, l] of opts) s.append(h('option', { value: v, selected: String(v) === String(value) }, l));
@@ -285,7 +286,7 @@
     const s = { ...S().settings };
     const bind = (key, el, type = 'value') => {
       const inp = el.tagName === 'LABEL' ? el.querySelector('input') : el;
-      const get = () => (inp.type === 'checkbox' ? inp.checked : inp.type === 'number' ? Number(inp.value) : inp.value);
+      const get = () => (inp.type === 'checkbox' ? inp.checked : (inp.type === 'number' || inp.dataset.num) ? Number(inp.value) : inp.value);
       inp.addEventListener('change', () => { s[key] = get(); });
       return el;
     };

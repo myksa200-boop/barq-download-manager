@@ -607,10 +607,15 @@ class HlsTask extends BaseTask {
       this.list = p.segments;
       this.map = p.map;
       if (!this.list.length) throw new Error('القائمة لا تحتوي على مقاطع');
+      // مقطع التهيئة (EXT-X-MAP / fMP4) يُجلب قبل بدء العمّال: بدونه يكون الملف المدمج تالفاً،
+      // ولو انتهت المقاطع قبله (استئناف أو مقطع تهيئة بطيء) كان الدمج يتم من دونه.
+      this.mapBuf = null;
+      if (this.map) this.mapBuf = await this._withRetry(() => fetchBuffer(this.map, { headers: this.headers(), timeout: this.timeout, signal: this.abort.signal }));
       await fsp.mkdir(this.partDir, { recursive: true });
     } catch (e) {
+      const paused = !this.running || e.code === 'ABORTED';   // أُوقف أثناء التحضير: ليس خطأً
       this.running = false;
-      this.emit('error', e, friendlyError(e));
+      if (!paused) this.emit('error', e, friendlyError(e));
       return;
     }
     if (!this.running) return;
@@ -634,7 +639,6 @@ class HlsTask extends BaseTask {
       this.workers.push(w);
       w.promise = this._work(w).finally(() => { w.alive = false; this._onExit(); });
     }
-    if (this.map) this.mapBuf = await this._withRetry(() => fetchBuffer(this.map, { headers: this.headers(), timeout: this.timeout })).catch(() => null);
   }
   _syncSegs() {
     // تمثيل بصري: كل مقطع كقطعة

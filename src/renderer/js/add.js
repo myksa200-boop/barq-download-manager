@@ -2,7 +2,7 @@
 (function () {
   const api = window.api;
   const key = new URLSearchParams(location.search).get('k');
-  const S = { downloads: new Map(), categories: [], queues: [], settings: {}, root: '' };
+  const S = { downloads: new Map(), categories: [], queues: [], runningQueues: new Set(), settings: {}, root: '' };
   window.APP = { S, refreshAll() {}, renderGrid() {}, renderTree() {}, selected: () => [] };
 
   // النافذة على قدر المحتوى تماماً
@@ -30,7 +30,8 @@
     setTimeout(fit, 30);
   }
   api.on('evt:settings', (s) => { S.settings = s; UI.applyTheme(s.theme); });
-  api.on('evt:queues', (q) => { S.queues = q; });
+  // الحدث يحمل معرّفات الطوابير الشغّالة فقط، لا قائمة الطوابير نفسها
+  api.on('evt:queues', (q) => { S.runningQueues = new Set(q); });
   api.on('evt:reload', (st) => { S.categories = st.categories; S.queues = st.queues; });
   api.on('evt:toast', (m) => UI.toast(m));
   init().catch((e) => UI.toast(e.message, true));

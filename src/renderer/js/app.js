@@ -130,15 +130,15 @@
   function statusCell(d) {
     const size = liveSize(d), dl = liveDl(d);
     if (d.status === 'complete') return `<span class="st-complete">${esc(t('s_complete'))}</span>`;
-    if (d.status === 'error') return `<span class="st-error" title="${esc(d.error)}">${esc(t('s_error'))}${dl > 0 && size > 0 ? ' ' + pct(dl, size).toFixed(1) + '%' : ''}</span>`;
+    if (d.status === 'error') return `<span class="st-error" title="${esc(d.error)}">${esc(t('s_error'))}${dl > 0 && size > 0 ? ' ' + ltr(pct(dl, size).toFixed(1) + '%') : ''}</span>`;
     if (d.status === 'connecting') return `<span class="st-active">${esc(t('s_connecting'))}</span>`;
     if (d.status === 'merging') return `<span class="st-active">${esc(t('s_merging'))}</span>`;
     if (d.status === 'downloading') {
-      if (size > 0) { const p = pct(dl, size); return `<span class="cellbar st-active"><span>${p.toFixed(2)}%</span><i><b style="width:${p}%"></b></i></span>`; }
+      if (size > 0) { const p = pct(dl, size); return `<span class="cellbar st-active"><span>${ltr(p.toFixed(2) + '%')}</span><i><b style="width:${p}%"></b></i></span>`; }
       return `<span class="st-active">${ltr(fmtSize(dl))}</span>`;
     }
     if (d.status === 'queued') return `<span class="st-queued">${esc(t('s_queued'))}</span>`;
-    if (dl > 0 && size > 0) return `<span class="st-paused">${esc(t('s_paused'))} ${pct(dl, size).toFixed(1)}%</span>`;
+    if (dl > 0 && size > 0) return `<span class="st-paused">${esc(t('s_paused'))} ${ltr(pct(dl, size).toFixed(1) + '%')}</span>`;
     return '';
   }
   function fillRow(tr, d) {

@@ -50,6 +50,18 @@ class Components {
     this.pending = {};
     this.listeners = new Set();
   }
+  get tmpDir() { return path.join(this.binDir, '..', 'tmp'); }
+  /** يحذف ملفات الكوكيز المؤقتة المتبقية من تشغيل سابق انتهى فجأة (فيها جلسات المستخدم كنص مكشوف).
+   *  يُستدعى عند بدء البرنامج فقط، حين لا يعمل أي yt-dlp منه. */
+  cleanupTemp() {
+    let n = 0;
+    try {
+      for (const f of fs.readdirSync(this.tmpDir)) {
+        if (/^cookies-.*\.txt$/i.test(f)) { try { fs.rmSync(path.join(this.tmpDir, f), { force: true }); n++; } catch { /* ignore */ } }
+      }
+    } catch { /* المجلد غير موجود */ }
+    return n;
+  }
   get ytdlpPath() { return path.join(this.binDir, 'yt-dlp' + EXE); }
   get ffmpegLocal() { return path.join(this.binDir, 'ffmpeg' + EXE); }
   onProgress(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
@@ -289,7 +301,7 @@ function makeYtdlpTask(BaseTask, { friendlyError }) {
       } catch (e) {
         off(); this.running = false; this.emit('error', e, e.message); return;
       } finally { off(); }
-      if (!this.running) return;
+      if (!this.running) { if (cookieFile) fs.rm(cookieFile, { force: true }, () => {}); return; }
       await fsp.mkdir(this.rec.saveDir, { recursive: true }).catch(() => {});
       const base = this.rec.fileName.replace(/\.[^.\\/]{1,5}$/, '').replace(/%/g, '%%');
       const variant = this.rec.hlsVariant || 'best';

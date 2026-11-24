@@ -56,7 +56,7 @@
         h('div', { class: 'conn-table' }, h('table', { class: 'mini' }, h('thead', {}, h('tr', {}, h('th', { style: { width: '48px' } }, t('p_n')), h('th', { style: { width: '120px' } }, t('p_downloaded')), h('th', {}, t('p_info')))), h('tbody', { id: 'conns' })))));
     // limiter pane
     const limChk = h('input', { type: 'checkbox' }); limChk.checked = rec.speedLimit > 0;
-    const limIn = h('input', { class: 'field', type: 'number', min: 1, value: rec.speedLimit || 512, style: { width: '120px' } });
+    const limIn = UI.numInput({ min: 1, value: rec.speedLimit || 512, style: { width: '120px' } });
     const applyLim = () => api.call('props', id, { speedLimit: limChk.checked ? Math.max(1, Number(limIn.value) || 1) : 0 });
     limChk.onchange = applyLim; limIn.onchange = () => { if (limChk.checked) applyLim(); };
     panes.limiter = h('div', { class: 'pw-panel hidden' }, h('div', { class: 'row' }, h('label', { class: 'chk' }, limChk, t('limitThis')), limIn, h('span', { class: 'muted' }, 'KB/s')));
@@ -102,7 +102,7 @@
     for (const c of (p.conns || [])) {
       const info = c.info.startsWith('retry') ? t('i_retry', c.info.split(':')[1])
         : c.info.startsWith('preparing:') ? t('i_preparing', c.info.split(':')[1], c.info.split(':')[2])
-        : c.info === 'preparing' ? t('i_preparing', '', '…').replace(' …%', '')
+        : c.info === 'preparing' ? t('i_preparing', '', '…').replace(/\s*\u2066?…%\u2069?$/, '')
         : (p.ytdlp && c.info === 'receiving' && p.phase) ? `${t('i_receiving')} (${t('phase_' + p.phase)})`
         : t('i_' + c.info) || c.info;
       tb.append(h('tr', {}, h('td', {}, c.n), h('td', { html: ltr(fmtSize(c.bytes)) }), h('td', { style: { color: c.info === 'done' ? 'var(--ok)' : c.info === 'error' ? 'var(--err)' : '' } }, info)));

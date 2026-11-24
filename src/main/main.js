@@ -37,7 +37,7 @@ function createMain() {
   mainWin = new BrowserWindow({
     width: 1220, height: 720, minWidth: 900, minHeight: 520, show: false,
     icon: ICON, title: 'Barq Download Manager', backgroundColor: '#f3f4f6',
-    webPreferences: { preload: path.join(__dirname, '..', 'preload', 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: false },
+    webPreferences: { preload: path.join(__dirname, '..', 'preload', 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   mainWin.removeMenu();
   mainWin.loadFile(path.join(RENDERER, 'index.html'));
@@ -61,7 +61,7 @@ function openProgress(id, opts = {}) {
   w = new BrowserWindow({
     width: 600, height: opts.complete || !manager.settings.progressDetails ? 330 : 560, resizable: true, minimizable: true, maximizable: false, show: false,
     icon: ICON, backgroundColor: '#f3f4f6', title: 'Barq',
-    webPreferences: { preload: path.join(__dirname, '..', 'preload', 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: false },
+    webPreferences: { preload: path.join(__dirname, '..', 'preload', 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   w.removeMenu();
   w.loadFile(path.join(RENDERER, 'progress.html'), { query: { id, complete: opts.complete ? '1' : '' } });
@@ -84,7 +84,7 @@ function openAddWindow(data) {
   const w = new BrowserWindow({
     width: 640, height: 430, useContentSize: true, resizable: false, minimizable: true, maximizable: false, show: false,
     icon: ICON, backgroundColor: manager.settings.theme === 'dark' ? '#111827' : '#ffffff', title: 'Barq',
-    webPreferences: { preload: path.join(__dirname, '..', 'preload', 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: false },
+    webPreferences: { preload: path.join(__dirname, '..', 'preload', 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   w.removeMenu();
   w.loadFile(path.join(RENDERER, 'add.html'), { query: { k } });
@@ -468,6 +468,7 @@ app.whenReady().then(() => {
     getSettings: () => (manager ? manager.settings : db.settings.all()),
     saveSettings: (p) => manager && manager.saveSettings(p),
   });
+  try { components.cleanupTemp(); } catch { /* ignore */ }
   manager = new Manager(db, { defaultRoot: app.getPath('downloads'), components });
   // تسجيل التشغيل مع النظام في كل تشغيل (المسار قد يتغير بعد التحديث أو نقل النسخة المحمولة)
   applyAutoStart(manager.settings.autoStart);

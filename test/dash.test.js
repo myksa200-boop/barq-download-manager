@@ -17,7 +17,8 @@ const { findFfmpeg } = require('../src/main/ffmpeg');
   if (!fs.existsSync(probeBin)) probeBin = 'ffprobe';
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'barq-dash-'));
   const media = path.join(root, 'media');
-  const run = (args) => execFileSync(ff, ['-loglevel', 'error', '-y', ...args]);
+  // FFmpeg 9 يكتب مقاطع DASH في مجلد العمل الحالي، فنشغّله داخل مجلد الإخراج نفسه
+  const run = (args, cwd) => execFileSync(ff, ['-loglevel', 'error', '-y', ...args], cwd ? { cwd } : {});
   fs.mkdirSync(media);
   const v = path.join(media, 'v.mp4'); const a = path.join(media, 'a.m4a');
   run(['-f', 'lavfi', '-i', 'testsrc=size=640x360:rate=25', '-t', '6', '-c:v', 'libx264', '-g', '25', '-pix_fmt', 'yuv420p', '-an', v]);
@@ -25,7 +26,7 @@ const { findFfmpeg } = require('../src/main/ffmpeg');
   const common = ['-i', v, '-i', a, '-map', '0:v', '-map', '0:v', '-map', '1:a', '-c:v', 'libx264', '-g', '25', '-b:v:0', '800k', '-s:v:0', '640x360', '-b:v:1', '300k', '-s:v:1', '320x180', '-c:a', 'aac', '-f', 'dash', '-seg_duration', '1', '-adaptation_sets', 'id=0,streams=v id=1,streams=a'];
   for (const [dir, extra] of [['tpl', ['-use_template', '1', '-use_timeline', '1']], ['num', ['-use_template', '1', '-use_timeline', '0']], ['list', ['-use_template', '0', '-use_timeline', '0']], ['single', ['-single_file', '1']]]) {
     fs.mkdirSync(path.join(media, dir));
-    run([...common, ...extra, path.join(media, dir, 'manifest.mpd')]);
+    run([...common, ...extra, 'manifest.mpd'], path.join(media, dir));   // مسار نسبي: وإلا كتب FFmpeg مسار ويندوز كاملاً في BaseURL
   }
   // SegmentBase: ملف كامل لكل مسار
   fs.mkdirSync(path.join(media, 'base'));
