@@ -143,8 +143,13 @@ class Components {
 function baseEnv() {
   return { ...process.env, ELECTRON_RUN_AS_NODE: '1', PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' };
 }
+/** مواقع ترد بـ 103 Early Hints (مثل خوادم Meta): مكتبة Python تعدّها خطأ، فنطلبها بمحاكاة المتصفح (curl_cffi) */
+const IMPERSONATE_HOSTS = new Set();
+const hostOf = (u) => { try { return new URL(u).hostname; } catch { return ''; } };
+const isEarlyHintsError = (t) => /HTTP Error 1\d\d\b/i.test(String(t || ''));
 function commonArgs(rec) {
   const a = ['--js-runtimes', `node:${process.execPath}`, '--no-colors', '--encoding', 'utf-8'];
+  if (IMPERSONATE_HOSTS.has(hostOf(rec.url))) a.push('--impersonate', 'chrome');
   if (rec.referer) a.push('--referer', rec.referer);
   if (rec.userAgent) a.push('--user-agent', rec.userAgent);
   try {
@@ -177,7 +182,10 @@ function friendlyYtdlpError(text) {
   if (/age|inappropriate|confirm your age/i.test(t) && /sign in/i.test(t)) return 'الفيديو مقيد بالعمر: أرسله من الإضافة وأنت مسجّل الدخول في YouTube';
   if (/Video unavailable|not available|has been removed/i.test(t)) return 'الفيديو غير متاح أو محذوف';
   if (/DRM/i.test(t)) return 'هذا الفيديو محمي بنظام DRM ولا يمكن تنزيله';
-  if (/Unsupported URL|No video formats found|Unable to extract/i.test(t)) return 'لم يتم العثور على فيديو قابل للتنزيل في هذه الصفحة';
+  if (/Unsupported URL|No video formats found|Unable to extract/i.test(t)) return 'لم يتم العثور على فيديو قابل للتنزيل في هذه الصفحة. شغّل الفيديو ثم اختره من قائمة برق على الفيديو (MP4) بدلاً من «الصفحة»';
+  if (/redirect loop/i.test(t)) return 'الموقع يعيد التوجيه باستمرار (يتطلب تسجيل الدخول). شغّل الفيديو في المتصفح ثم اختره من قائمة برق على الفيديو (MP4) بدلاً من «الصفحة»';
+  if (/HTTP Error 1\d\d\b/i.test(t)) return 'لم يستطع yt-dlp قراءة هذه الصفحة. شغّل الفيديو ثم اختره من قائمة برق على الفيديو (MP4) بدلاً من «الصفحة»';
+  if (/\[generic\].*Unable to download webpage/i.test(t)) return 'تعذّر قراءة الصفحة. شغّل الفيديو ثم اختره من قائمة برق على الفيديو (MP4) بدلاً من «الصفحة»';
   if (/HTTP Error 403/i.test(t)) return 'رفض الخادم الطلب (403). حدّث yt-dlp من الخيارات ← التنزيلات، ثم أعد المحاولة';
   if (/HTTP Error 429|Too Many Requests/i.test(t)) return 'طلبات كثيرة (429): انتظر قليلاً ثم أعد المحاولة';
   if (/timed out|ETIMEDOUT|getaddrinfo|ENOTFOUND|Connection reset|network/i.test(t)) return 'تعذّر الاتصال بالموقع: تحقّق من الإنترنت ثم أعد المحاولة';
@@ -213,16 +221,29 @@ async function ytdlpInfo(components, rec, { timeout = 120000 } = {}) {
   // اسم فريد لكل فحص حتى لا يحذف فحصٌ ملف كوكيز فحصٍ آخر يعمل معه
   const cookieFile = await writeCookies({ ...rec, _id: `${rec._id || 'x'}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` }, path.join(components.binDir, '..', 'tmp'));
   const isList = u.searchParams.has('list') && !u.searchParams.has('v') || /\/playlist$/.test(u.pathname);
-  const args = ['-J', ...(isList ? ['--flat-playlist'] : ['--no-playlist']), ...commonArgs(rec)];
-  if (cookieFile) args.push('--cookies', cookieFile);
-  args.push('--', rec.url);
-  const out = await new Promise((resolve, reject) => {
-    execFile(bin, args, { env: baseEnv(), maxBuffer: 64 * 1024 * 1024, timeout, windowsHide: true }, (err, so, se) => {
-      if (cookieFile) fs.rm(cookieFile, { force: true }, () => {});
-      if (err) return reject(new Error(friendlyYtdlpError(se || err.message)));
-      resolve(so);
+  const run = () => {
+    const args = ['-J', ...(isList ? ['--flat-playlist'] : ['--no-playlist']), ...commonArgs(rec)];
+    if (cookieFile) args.push('--cookies', cookieFile);
+    args.push('--', rec.url);
+    return new Promise((resolve, reject) => {
+      execFile(bin, args, { env: baseEnv(), maxBuffer: 64 * 1024 * 1024, timeout, windowsHide: true }, (err, so, se) => {
+        if (err) { const e = new Error(friendlyYtdlpError(se || err.message)); e.raw = String(se || err.message); return reject(e); }
+        resolve(so);
+      });
     });
-  });
+  };
+  let out;
+  try {
+    try { out = await run(); } catch (e) {
+      // 103 Early Hints: نعيد المحاولة بمحاكاة Chrome ونتذكّر الموقع ليستعملها التنزيل أيضاً
+      const host = hostOf(rec.url);
+      if (!isEarlyHintsError(e.raw) || IMPERSONATE_HOSTS.has(host)) throw e;
+      IMPERSONATE_HOSTS.add(host);
+      try { out = await run(); } catch (e2) { IMPERSONATE_HOSTS.delete(host); throw e2; }
+    }
+  } finally {
+    if (cookieFile) fs.rm(cookieFile, { force: true }, () => {});
+  }
   const j = JSON.parse(String(out));
   if (j._type === 'playlist') {
     const entries = (j.entries || []).filter(Boolean).map(e => ({
